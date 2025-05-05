@@ -14,6 +14,9 @@ TOKEN = os.getenv('TOKEN')
 bot = telebot.TeleBot(TOKEN)
 file_handler = FileHandler()
 
+# Словарь для хранения информации о загружаемых файлах
+uploading_files = {}
+
 # Удаляем вебхук перед запуском
 bot.remove_webhook()
 
@@ -205,6 +208,21 @@ def get_file(message):
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
+    """Обработчик загрузки файлов"""
+    if not message.document:
+        bot.reply_to(message, "❌ Ошибка: файл не найден в сообщении.")
+        return
+
+    if not message.document.file_id:
+        bot.reply_to(message, "❌ Ошибка: не удалось получить идентификатор файла.")
+        return
+
+    # Сохраняем информацию о файле
+    uploading_files[message.chat.id] = {
+        'file_id': message.document.file_id,
+        'file_name': message.document.file_name
+    }
+
     markup = create_category_menu()
     bot.send_message(
         message.chat.id,
@@ -214,12 +232,13 @@ def handle_document(message):
     bot.register_next_step_handler(message, process_category_selection)
 
 def process_category_selection(message):
+    """Обработчик выбора категории"""
     if message.text == '🔙 Вернуться в главное меню':
         markup = create_main_menu()
         bot.send_message(message.chat.id, "Главное меню:", reply_markup=markup)
         return
 
-    category = message.text[2:] if message.text.startswith('📂 ') else "Other"
+    category = message.text[2:].strip() if message.text.startswith('📂 ') else "Other"
     
     if category in file_handler.subcategories:
         markup = create_subcategory_menu(category)
@@ -233,6 +252,7 @@ def process_category_selection(message):
         save_file_to_category(message, category)
 
 def process_subcategory_selection(message, category):
+    """Обработчик выбора подкатегории"""
     if message.text == '🔙 Вернуться в главное меню':
         markup = create_main_menu()
         bot.send_message(message.chat.id, "Главное меню:", reply_markup=markup)
@@ -241,7 +261,7 @@ def process_subcategory_selection(message, category):
         show_categories(message)
         return
 
-    subcategory = message.text[2:] if message.text.startswith('📁 ') else None
+    subcategory = message.text[2:].strip() if message.text.startswith('📁 ') else None
     
     if subcategory and subcategory in file_handler.subcategories[category]:
         save_file_to_category(message, category, subcategory)
@@ -254,26 +274,58 @@ def process_subcategory_selection(message, category):
         )
 
 def save_file_to_category(message, category, subcategory=None):
+    """Сохранение файла в выбранную категорию"""
     try:
-        file_info = bot.get_file(message.document.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        
+        # Получаем информацию о файле из словаря
+        file_info = uploading_files.get(message.chat.id)
+        if not file_info:
+            bot.reply_to(message, "❌ Ошибка: информация о файле не найдена.")
+            return
+
+        # Проверяем, существует ли файл с таким именем
+        existing_files = file_handler.get_files_list(category, subcategory)
+        for file in existing_files:
+            if file['name'] == file_info['file_name']:
+                markup = create_main_menu()
+                bot.send_message(
+                    message.chat.id,
+                    f"❌ Файл с именем {file_info['file_name']} уже существует в этой категории.",
+                    reply_markup=markup
+                )
+                uploading_files.pop(message.chat.id, None)
+                return
+
+        file_data = bot.get_file(file_info['file_id'])
+        if not file_data:
+            bot.reply_to(message, "❌ Ошибка: не удалось получить информацию о файле.")
+            return
+
+        downloaded_file = bot.download_file(file_data.file_path)
+        if not downloaded_file:
+            bot.reply_to(message, "❌ Ошибка: не удалось скачать файл.")
+            return
+
         file_handler.save_file(
-            message.document.file_id,
-            message.document.file_name,
+            file_info['file_id'],
+            file_info['file_name'],
             downloaded_file,
             category,
             subcategory
         )
         
+        # Удаляем информацию о файле после успешного сохранения
+        uploading_files.pop(message.chat.id, None)
+        
         markup = create_main_menu()
         location = f"подкатегорию {subcategory} категории {category}" if subcategory else f"категорию {category}"
         bot.send_message(
             message.chat.id,
-            f"✅ Файл {message.document.file_name} успешно сохранен в {location}!",
+            f"✅ Файл {file_info['file_name']} успешно сохранен в {location}!",
             reply_markup=markup
         )
     except Exception as e:
+        # Удаляем информацию о файле в случае ошибки
+        uploading_files.pop(message.chat.id, None)
         markup = create_main_menu()
         bot.send_message(
             message.chat.id,
