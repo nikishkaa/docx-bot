@@ -493,9 +493,7 @@ def handle_messages(message):
                 break
     elif message.text.startswith('📥 '):
         file_name = message.text[2:].strip()
-        
         try:
-            # Ищем файл во всех категориях и подкатегориях
             found = False
             for category in file_handler.categories:
                 file_data = file_handler.get_file(file_name, category)
