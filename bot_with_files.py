@@ -361,9 +361,10 @@ def show_all_files(message):
     # Сортируем файлы по категории, подкатегории и имени
     all_files.sort(key=lambda x: (x['category'], x.get('subcategory', ''), x['name']))
     
-    # Отправляем общее количество файлов
+    # Отправляем общее количество файлов с эмодзи и выделением
     total_files = len(all_files)
-    bot.send_message(message.chat.id, f"Всего файлов: {total_files}")
+    counter_message = f"📊 *СТАТИСТИКА ФАЙЛОВ*\n\n📚 Всего файлов в системе: *{total_files}*"
+    bot.send_message(message.chat.id, counter_message, parse_mode='Markdown')
     
     # Разбиваем список на части по 10 файлов
     for i in range(0, len(all_files), 10):
