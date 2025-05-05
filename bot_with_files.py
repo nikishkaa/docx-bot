@@ -28,10 +28,11 @@ bot.set_my_commands([
 def create_main_menu():
     """Создает главное меню с кнопками"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    btn1 = types.KeyboardButton('📁 Список файлов')
-    btn2 = types.KeyboardButton('📤 Загрузить файл')
-    btn3 = types.KeyboardButton('❓ Помощь')
-    markup.add(btn1, btn2, btn3)
+    btn1 = types.KeyboardButton('📥 Скачать файлы')
+    btn2 = types.KeyboardButton('📋 Список файлов')
+    btn3 = types.KeyboardButton('📤 Загрузить файл')
+    btn4 = types.KeyboardButton('❓ Помощь')
+    markup.add(btn1, btn2, btn3, btn4)
     return markup
 
 def create_category_menu():
@@ -83,10 +84,12 @@ def create_files_menu(files, category, subcategory=None):
 
 @bot.message_handler(commands=['start'])
 def start(message):
+    """Обработчик команды /start"""
     markup = create_main_menu()
     bot.send_message(
         message.chat.id,
-        "👋 Привет! Я бот для работы с файлами.\n\n"
+        "👋 Добро пожаловать!\n\n"
+        "Я помогу вам управлять файлами.\n"
         "Выберите действие в меню ниже:",
         reply_markup=markup
     )
@@ -103,15 +106,21 @@ def help_command(message):
     )
     bot.send_message(message.chat.id, help_text)
 
-@bot.message_handler(commands=['files'])
-def show_categories(message):
+def show_categories(message, view_only=False):
     """Показывает меню с категориями"""
     markup = create_category_menu()
-    bot.send_message(
-        message.chat.id,
-        "📂 Выберите категорию:",
-        reply_markup=markup
-    )
+    if view_only:
+        bot.send_message(
+            message.chat.id,
+            "📋 Выберите категорию для просмотра списка файлов:",
+            reply_markup=markup
+        )
+    else:
+        bot.send_message(
+            message.chat.id,
+            "📥 Выберите категорию для скачивания файлов:",
+            reply_markup=markup
+        )
 
 def show_subcategories(message, category):
     """Показывает меню с подкатегориями"""
@@ -158,32 +167,34 @@ def list_files(message, category, subcategory=None):
     # Затем показываем файлы
     response += "📄 Файлы:\n"
     for file in files:
+        file_path = f"{category}"
+        if 'subcategory' in file:
+            file_path += f"/{file['subcategory']}"
+        file_path += f"/{file['name']}"
+        
         response += f"📄 {file['name']}\n"
+        response += f"📂 Путь: {file_path}\n"
         response += f"📊 Размер: {file['size']}\n"
         response += f"🕒 Дата: {file['date']}\n\n"
     
-    # Создаем меню с кнопками для скачивания файлов
     markup = create_files_menu(files, category, subcategory)
     bot.send_message(message.chat.id, response, reply_markup=markup)
 
 @bot.message_handler(commands=['get'])
 def get_file(message):
     try:
-        # Получаем имя файла из команды
         file_name = message.text.split()[1] if len(message.text.split()) > 1 else None
         
         if not file_name:
             bot.reply_to(message, "❌ Пожалуйста, укажите имя файла.\nПример: /get example.txt")
             return
 
-        # Получаем файл
         file_data = file_handler.get_file(file_name)
         
         if file_data is None:
             bot.reply_to(message, f"❌ Файл {file_name} не найден.")
             return
 
-        # Отправляем файл пользователю
         bot.send_document(
             message.chat.id,
             file_data,
@@ -194,14 +205,12 @@ def get_file(message):
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
-    # Создаем меню выбора категории
     markup = create_category_menu()
     bot.send_message(
         message.chat.id,
         "📂 Выберите категорию для файла:",
         reply_markup=markup
     )
-    # Сохраняем информацию о файле для последующей обработки
     bot.register_next_step_handler(message, process_category_selection)
 
 def process_category_selection(message):
@@ -210,10 +219,8 @@ def process_category_selection(message):
         bot.send_message(message.chat.id, "Главное меню:", reply_markup=markup)
         return
 
-    # Получаем категорию из текста сообщения
     category = message.text[2:] if message.text.startswith('📂 ') else "Other"
     
-    # Если у категории есть подкатегории, показываем их
     if category in file_handler.subcategories:
         markup = create_subcategory_menu(category)
         bot.send_message(
@@ -223,7 +230,6 @@ def process_category_selection(message):
         )
         bot.register_next_step_handler(message, lambda m: process_subcategory_selection(m, category))
     else:
-        # Если подкатегорий нет, сохраняем файл сразу в категорию
         save_file_to_category(message, category)
 
 def process_subcategory_selection(message, category):
@@ -235,7 +241,6 @@ def process_subcategory_selection(message, category):
         show_categories(message)
         return
 
-    # Получаем подкатегорию из текста сообщения
     subcategory = message.text[2:] if message.text.startswith('📁 ') else None
     
     if subcategory and subcategory in file_handler.subcategories[category]:
@@ -250,11 +255,9 @@ def process_subcategory_selection(message, category):
 
 def save_file_to_category(message, category, subcategory=None):
     try:
-        # Получаем информацию о файле из предыдущего сообщения
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
-        # Сохраняем файл в выбранную категорию/подкатегорию
         file_handler.save_file(
             message.document.file_id,
             message.document.file_name,
@@ -278,11 +281,57 @@ def save_file_to_category(message, category, subcategory=None):
             reply_markup=markup
         )
 
+def show_all_files(message):
+    """Показывает все файлы из всех категорий и подкатегорий"""
+    all_files = []
+    for category in file_handler.categories:
+        # Получаем файлы из основной категории
+        files = file_handler.get_files_list(category)
+        for file in files:
+            file['category'] = category
+            all_files.append(file)
+        
+        # Получаем файлы из подкатегорий
+        if category in file_handler.subcategories:
+            for subcategory in file_handler.subcategories[category]:
+                files = file_handler.get_files_list(category, subcategory)
+                for file in files:
+                    file['category'] = category
+                    file['subcategory'] = subcategory
+                    all_files.append(file)
+
+    if not all_files:
+        bot.send_message(message.chat.id, "📭 В системе пока нет файлов.")
+        return
+
+    # Сортируем файлы по категории и подкатегории
+    all_files.sort(key=lambda x: (x.get('category', ''), x.get('subcategory', ''), x['name']))
+
+    # Разбиваем список на части по 10 файлов
+    chunk_size = 10
+    for i in range(0, len(all_files), chunk_size):
+        chunk = all_files[i:i + chunk_size]
+        response = "📋 Список файлов:\n\n"
+        
+        for file in chunk:
+            file_path = file['category']
+            if 'subcategory' in file:
+                file_path += f"/{file['subcategory']}"
+            file_path += f"/{file['name']}"
+            
+            response += f"📄 {file['name']}\n"
+            response += f"📂 Путь: {file_path}\n"
+            response += f"📊 Размер: {file['size']}\n"
+            response += f"🕒 Дата: {file['date']}\n\n"
+        
+        bot.send_message(message.chat.id, response)
+
 @bot.message_handler(func=lambda message: True)
 def handle_messages(message):
-    """Обработчик текстовых сообщений"""
-    if message.text == '📁 Список файлов':
+    if message.text == '📥 Скачать файлы':
         show_categories(message)
+    elif message.text == '📋 Список файлов':
+        show_all_files(message)
     elif message.text == '📤 Загрузить файл':
         bot.send_message(
             message.chat.id,
@@ -300,36 +349,50 @@ def handle_messages(message):
     elif message.text == '⬅️ Назад к категориям':
         show_categories(message)
     elif message.text.startswith('📂 '):
-        # Обработка выбора категории
         category = message.text[2:].strip()
         if category in file_handler.subcategories:
             show_subcategories(message, category)
         else:
             list_files(message, category)
     elif message.text.startswith('📁 '):
-        # Обработка выбора подкатегории
         subcategory = message.text[2:].strip()
-        # Находим категорию для этой подкатегории
         for category in file_handler.subcategories:
             if subcategory in file_handler.subcategories[category]:
                 list_files(message, category, subcategory)
                 break
     elif message.text.startswith('📥 '):
-        # Обработка нажатия на кнопку скачивания файла
-        file_name = message.text[2:].strip()  # Убираем эмодзи и пробел
+        file_name = message.text[2:].strip()
         
         try:
             # Ищем файл во всех категориях и подкатегориях
-            file_data = file_handler.get_file(file_name)
-            if file_data is None:
-                bot.reply_to(message, f"❌ Файл {file_name} не найден.")
-                return
+            found = False
+            for category in file_handler.categories:
+                file_data = file_handler.get_file(file_name, category)
+                if file_data is not None:
+                    bot.send_document(
+                        message.chat.id,
+                        file_data,
+                        visible_file_name=file_name
+                    )
+                    found = True
+                    break
+                
+                if category in file_handler.subcategories:
+                    for subcategory in file_handler.subcategories[category]:
+                        file_data = file_handler.get_file(file_name, category, subcategory)
+                        if file_data is not None:
+                            bot.send_document(
+                                message.chat.id,
+                                file_data,
+                                visible_file_name=file_name
+                            )
+                            found = True
+                            break
+                    if found:
+                        break
             
-            bot.send_document(
-                message.chat.id,
-                file_data,
-                visible_file_name=file_name
-            )
+            if not found:
+                bot.reply_to(message, f"❌ Файл {file_name} не найден.")
         except Exception as e:
             bot.reply_to(message, f"❌ Произошла ошибка при получении файла: {str(e)}")
     else:
@@ -340,4 +403,5 @@ def handle_messages(message):
 
 if __name__ == "__main__":
     print("Бот запущен...")
+    # Запускаем бота
     bot.polling(non_stop=True) 
