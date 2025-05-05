@@ -25,6 +25,7 @@ bot.set_my_commands([
     types.BotCommand("start", "Запустить бота и показать главное меню"),
     types.BotCommand("files", "Показать список сохраненных файлов"),
     types.BotCommand("get", "Скачать файл по имени"),
+    types.BotCommand("search", "Поиск файлов по части имени"),
     types.BotCommand("help", "Показать справку по командам")
 ])
 
@@ -34,8 +35,9 @@ def create_main_menu():
     btn1 = types.KeyboardButton('📥 Скачать файлы')
     btn2 = types.KeyboardButton('📋 Список файлов')
     btn3 = types.KeyboardButton('📤 Загрузить файл')
-    btn4 = types.KeyboardButton('❓ Помощь')
-    markup.add(btn1, btn2, btn3, btn4)
+    btn4 = types.KeyboardButton('🔍 Поиск файлов')
+    btn5 = types.KeyboardButton('❓ Помощь')
+    markup.add(btn1, btn2, btn3, btn4, btn5)
     return markup
 
 def create_category_menu():
@@ -104,6 +106,7 @@ def help_command(message):
         "/start - Запустить бота и показать главное меню\n"
         "/files - Показать список сохраненных файлов\n"
         "/get filename - Скачать файл по имени\n"
+        "/search query - Поиск файлов по части имени\n"
         "/help - Показать это сообщение\n\n"
         "Также вы можете использовать кнопки меню для навигации."
     )
@@ -382,6 +385,72 @@ def show_all_files(message):
         if response:  # Отправляем только если есть что отправлять
             bot.send_message(message.chat.id, response)
 
+def search_files(message):
+    """Поиск файлов по части имени"""
+    # Получаем поисковый запрос
+    search_query = message.text.strip()
+    
+    if not search_query:
+        bot.reply_to(message, "🔍 Укажите поисковый запрос\nПример: docker")
+        return
+    
+    # Собираем все файлы
+    all_files = []
+    for category in file_handler.categories:
+        # Получаем файлы из основной категории
+        files = file_handler.get_files_list(category)
+        for file in files:
+            file['category'] = category
+            all_files.append(file)
+        
+        # Получаем файлы из подкатегорий
+        if category in file_handler.subcategories:
+            for subcategory in file_handler.subcategories[category]:
+                files = file_handler.get_files_list(category, subcategory)
+                for file in files:
+                    file['category'] = category
+                    file['subcategory'] = subcategory
+                    all_files.append(file)
+    
+    # Ищем файлы, содержащие поисковый запрос
+    found_files = []
+    search_query = search_query.lower()
+    for file in all_files:
+        if search_query in file['name'].lower():
+            found_files.append(file)
+    
+    if not found_files:
+        bot.reply_to(message, f"🔍 По запросу '{search_query}' ничего не найдено")
+        return
+    
+    # Сортируем найденные файлы
+    found_files.sort(key=lambda x: (x['category'], x.get('subcategory', ''), x['name']))
+    
+    # Отправляем статистику поиска
+    total_found = len(found_files)
+    counter_message = f"🔍 *РЕЗУЛЬТАТЫ ПОИСКА*\n\n📚 Найдено файлов: *{total_found}*\n🔎 Поисковый запрос: *{search_query}*"
+    bot.send_message(message.chat.id, counter_message, parse_mode='Markdown')
+    
+    # Отправляем найденные файлы
+    for i in range(0, len(found_files), 10):
+        chunk = found_files[i:i+10]
+        response = ""
+        for file in chunk:
+            response += f"📄 {file['name']}\n"
+            response += f"📂 Путь: {file['category']}"
+            if 'subcategory' in file:
+                response += f"/{file['subcategory']}"
+            response += f"\n📊 Размер: {file['size']}\n"
+            response += f"🕒 Дата: {file['date']}\n\n"
+        
+        if response:
+            bot.send_message(message.chat.id, response)
+
+@bot.message_handler(commands=['search'])
+def handle_search(message):
+    """Обработчик команды поиска"""
+    search_files(message)
+
 @bot.message_handler(func=lambda message: True)
 def handle_messages(message):
     if message.text == '📥 Скачать файлы':
@@ -393,6 +462,12 @@ def handle_messages(message):
             message.chat.id,
             "📎 Отправьте мне файл, и я его сохраню."
         )
+    elif message.text == '🔍 Поиск файлов':
+        bot.send_message(
+            message.chat.id,
+            "🔍 Введите поисковый запрос\nПример: docker"
+        )
+        bot.register_next_step_handler(message, search_files)
     elif message.text == '❓ Помощь':
         help_command(message)
     elif message.text == '🔙 Вернуться в главное меню':
@@ -452,10 +527,16 @@ def handle_messages(message):
         except Exception as e:
             bot.reply_to(message, f"❌ Произошла ошибка при получении файла: {str(e)}")
     else:
-        bot.send_message(
-            message.chat.id,
-            "❓ Неизвестная команда. Используйте меню или /help для получения списка команд."
-        )
+        # Если сообщение не является командой, пробуем использовать его как поисковый запрос
+        search_query = message.text.strip()
+        if search_query:
+            message.text = f"/search {search_query}"
+            search_files(message)
+        else:
+            bot.send_message(
+                message.chat.id,
+                "❓ Неизвестная команда. Используйте меню или /help для получения списка команд."
+            )
 
 if __name__ == "__main__":
     print("Бот запущен...")
