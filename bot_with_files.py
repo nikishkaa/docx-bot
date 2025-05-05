@@ -2,10 +2,20 @@ import telebot
 from file_handler import FileHandler
 from telebot import types
 import os
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения из файла .env
+load_dotenv()
+
+# Получаем токен из переменной окружения
+TOKEN = os.getenv('TOKEN')
 
 # Инициализация бота и обработчика файлов
-bot = telebot.TeleBot('7373495523:AAEge_21E9927fNFa9ETnEKknc437cGM4JU')
+bot = telebot.TeleBot(TOKEN)
 file_handler = FileHandler()
+
+# Удаляем вебхук перед запуском
+bot.remove_webhook()
 
 # Установка команд бота
 bot.set_my_commands([
