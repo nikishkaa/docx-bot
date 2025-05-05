@@ -3,39 +3,36 @@ from datetime import datetime
 
 class FileHandler:
     def __init__(self):
-        self.upload_dir = "uploads"
+        self.base_dir = "uploads"
         self.categories = ["Java", "AI", "DevOps", "Other"]
         self.subcategories = {
-            "DevOps": ["Docker", "Kubernetes"]
+            "DevOps": ["Docker", "Kubernetes", "Other"]
         }
         self._create_directories()
 
     def _create_directories(self):
         """Создает необходимые директории для хранения файлов"""
-        # Создаем основную директорию uploads, если её нет
-        if not os.path.exists(self.upload_dir):
-            os.makedirs(self.upload_dir)
+        # Создаем базовую директорию
+        os.makedirs(self.base_dir, exist_ok=True)
         
-        # Создаем подпапки для каждой категории
+        # Создаем директории для категорий
         for category in self.categories:
-            category_path = os.path.join(self.upload_dir, category)
-            if not os.path.exists(category_path):
-                os.makedirs(category_path)
+            category_path = os.path.join(self.base_dir, category)
+            os.makedirs(category_path, exist_ok=True)
             
-            # Создаем подпапки для подкатегорий, если они есть
-            if category in self.subcategories:
+            # Создаем подкатегории для DevOps
+            if category == "DevOps" and category in self.subcategories:
                 for subcategory in self.subcategories[category]:
                     subcategory_path = os.path.join(category_path, subcategory)
-                    if not os.path.exists(subcategory_path):
-                        os.makedirs(subcategory_path)
+                    os.makedirs(subcategory_path, exist_ok=True)
 
     def save_file(self, file_id, file_name, file_data, category="Other", subcategory=None):
         """Сохраняет файл в указанную категорию"""
         # Определяем путь для сохранения файла
         if subcategory and category in self.subcategories and subcategory in self.subcategories[category]:
-            save_path = os.path.join(self.upload_dir, category, subcategory, file_name)
+            save_path = os.path.join(self.base_dir, category, subcategory, file_name)
         else:
-            save_path = os.path.join(self.upload_dir, category, file_name)
+            save_path = os.path.join(self.base_dir, category, file_name)
         
         # Сохраняем файл
         with open(save_path, 'wb') as f:
@@ -47,14 +44,14 @@ class FileHandler:
         """Получает файл по имени"""
         # Если указана категория и подкатегория, ищем в конкретной подпапке
         if category and subcategory and category in self.subcategories and subcategory in self.subcategories[category]:
-            file_path = os.path.join(self.upload_dir, category, subcategory, file_name)
+            file_path = os.path.join(self.base_dir, category, subcategory, file_name)
             if os.path.exists(file_path):
                 with open(file_path, 'rb') as f:
                     return f.read()
         
         # Если указана только категория, ищем в папке категории
         if category:
-            file_path = os.path.join(self.upload_dir, category, file_name)
+            file_path = os.path.join(self.base_dir, category, file_name)
             if os.path.exists(file_path):
                 with open(file_path, 'rb') as f:
                     return f.read()
@@ -62,7 +59,7 @@ class FileHandler:
         # Если категория не указана, ищем во всех папках
         for category in self.categories:
             # Проверяем в основной папке категории
-            file_path = os.path.join(self.upload_dir, category, file_name)
+            file_path = os.path.join(self.base_dir, category, file_name)
             if os.path.exists(file_path):
                 with open(file_path, 'rb') as f:
                     return f.read()
@@ -70,7 +67,7 @@ class FileHandler:
             # Проверяем в подпапках категории
             if category in self.subcategories:
                 for subcategory in self.subcategories[category]:
-                    file_path = os.path.join(self.upload_dir, category, subcategory, file_name)
+                    file_path = os.path.join(self.base_dir, category, subcategory, file_name)
                     if os.path.exists(file_path):
                         with open(file_path, 'rb') as f:
                             return f.read()
@@ -83,18 +80,18 @@ class FileHandler:
         
         if category and subcategory and category in self.subcategories and subcategory in self.subcategories[category]:
             # Получаем файлы из конкретной подпапки
-            category_path = os.path.join(self.upload_dir, category, subcategory)
+            category_path = os.path.join(self.base_dir, category, subcategory)
             if os.path.exists(category_path):
                 files.extend(self._get_category_files(category_path, category, subcategory))
         elif category:
             # Получаем файлы из папки категории
-            category_path = os.path.join(self.upload_dir, category)
+            category_path = os.path.join(self.base_dir, category)
             if os.path.exists(category_path):
                 files.extend(self._get_category_files(category_path, category))
         else:
             # Получаем файлы из всех категорий
             for category in self.categories:
-                category_path = os.path.join(self.upload_dir, category)
+                category_path = os.path.join(self.base_dir, category)
                 if os.path.exists(category_path):
                     files.extend(self._get_category_files(category_path, category))
         

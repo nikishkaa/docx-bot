@@ -336,6 +336,8 @@ def save_file_to_category(message, category, subcategory=None):
 def show_all_files(message):
     """Показывает все файлы из всех категорий и подкатегорий"""
     all_files = []
+    
+    # Собираем файлы из всех категорий и подкатегорий
     for category in file_handler.categories:
         # Получаем файлы из основной категории
         files = file_handler.get_files_list(category)
@@ -351,32 +353,33 @@ def show_all_files(message):
                     file['category'] = category
                     file['subcategory'] = subcategory
                     all_files.append(file)
-
+    
     if not all_files:
-        bot.send_message(message.chat.id, "📭 В системе пока нет файлов.")
+        bot.send_message(message.chat.id, "Файлы не найдены")
         return
-
-    # Сортируем файлы по категории и подкатегории
-    all_files.sort(key=lambda x: (x.get('category', ''), x.get('subcategory', ''), x['name']))
-
+    
+    # Сортируем файлы по категории, подкатегории и имени
+    all_files.sort(key=lambda x: (x['category'], x.get('subcategory', ''), x['name']))
+    
+    # Отправляем общее количество файлов
+    total_files = len(all_files)
+    bot.send_message(message.chat.id, f"Всего файлов: {total_files}")
+    
     # Разбиваем список на части по 10 файлов
-    chunk_size = 10
-    for i in range(0, len(all_files), chunk_size):
-        chunk = all_files[i:i + chunk_size]
-        response = "📋 Список файлов:\n\n"
-        
+    for i in range(0, len(all_files), 10):
+        chunk = all_files[i:i+10]
+        response = ""
         for file in chunk:
-            file_path = file['category']
-            if 'subcategory' in file:
-                file_path += f"/{file['subcategory']}"
-            file_path += f"/{file['name']}"
-            
             response += f"📄 {file['name']}\n"
-            response += f"📂 Путь: {file_path}\n"
-            response += f"📊 Размер: {file['size']}\n"
+            response += f"📂 Путь: {file['category']}"
+            if 'subcategory' in file:
+                response += f"/{file['subcategory']}"
+            response += f"\n📊 Размер: {file['size']}\n"
             response += f"🕒 Дата: {file['date']}\n\n"
         
-        bot.send_message(message.chat.id, response)
+        # Отправляем часть списка
+        if response:  # Отправляем только если есть что отправлять
+            bot.send_message(message.chat.id, response)
 
 @bot.message_handler(func=lambda message: True)
 def handle_messages(message):
