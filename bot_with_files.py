@@ -2,6 +2,7 @@ import telebot
 from file_handler import FileHandler
 from telebot import types
 import os
+import json
 from dotenv import load_dotenv
 
 # Загружаем переменные окружения из файла .env
@@ -19,6 +20,24 @@ uploading_files = {}
 
 # Словарь для хранения текущего контекста пользователя
 user_context = {}
+
+# Путь к файлу статистики
+STATS_FILE = 'download_stats.json'
+
+# Загружаем статистику из файла при запуске
+def load_stats():
+    if os.path.exists(STATS_FILE):
+        with open(STATS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+# Сохраняем статистику в файл
+def save_stats():
+    with open(STATS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(download_stats, f, ensure_ascii=False, indent=2)
+
+# Инициализируем статистику
+download_stats = load_stats()
 
 # Удаляем вебхук перед запуском
 bot.remove_webhook()
@@ -41,7 +60,8 @@ def create_main_menu():
     btn3 = types.KeyboardButton('📤 Загрузить файл')
     btn4 = types.KeyboardButton('🔍 Поиск файлов')
     btn5 = types.KeyboardButton('❓ Помощь')
-    markup.add(btn1, btn2, btn3, btn4, btn5)
+    btn6 = types.KeyboardButton('⚙️ Дополнительно')
+    markup.add(btn1, btn2, btn3, btn4, btn5, btn6)
     return markup
 
 
@@ -92,6 +112,16 @@ def create_files_menu(files, category, subcategory=None):
         btn = types.KeyboardButton(f"📥 {file['name']}")
         markup.add(btn)
 
+    return markup
+
+
+def create_additional_menu():
+    """Создает меню дополнительных функций"""
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    btn1 = types.KeyboardButton('📊 Статистика скачиваний')
+    btn2 = types.KeyboardButton('📈 Краткая статистика')
+    btn3 = types.KeyboardButton('🔙 Вернуться в главное меню')
+    markup.add(btn1, btn2, btn3)
     return markup
 
 
@@ -545,6 +575,17 @@ def handle_messages(message):
         bot.register_next_step_handler(message, search_files)
     elif message.text == '❓ Помощь':
         help_command(message)
+    elif message.text == '⚙️ Дополнительно':
+        markup = create_additional_menu()
+        bot.send_message(
+            message.chat.id,
+            "⚙️ Выберите действие:",
+            reply_markup=markup
+        )
+    elif message.text == '📊 Статистика скачиваний':
+        show_download_stats(message)
+    elif message.text == '📈 Краткая статистика':
+        show_brief_stats(message)
     elif message.text == '🔙 Вернуться в главное меню':
         markup = create_main_menu()
         bot.send_message(
@@ -600,6 +641,11 @@ def handle_messages(message):
                         file_data,
                         visible_file_name=file_name
                     )
+                    # Обновляем статистику скачиваний
+                    if file_name not in download_stats:
+                        download_stats[file_name] = {}
+                    download_stats[file_name][str(message.from_user.id)] = download_stats[file_name].get(str(message.from_user.id), 0) + 1
+                    save_stats()  # Сохраняем статистику после каждого скачивания
                     found = True
                     break
                 
@@ -612,6 +658,11 @@ def handle_messages(message):
                                 file_data,
                                 visible_file_name=file_name
                             )
+                            # Обновляем статистику скачиваний
+                            if file_name not in download_stats:
+                                download_stats[file_name] = {}
+                            download_stats[file_name][str(message.from_user.id)] = download_stats[file_name].get(str(message.from_user.id), 0) + 1
+                            save_stats()  # Сохраняем статистику после каждого скачивания
                             found = True
                             break
                     if found:
@@ -631,6 +682,75 @@ def handle_messages(message):
                 message.chat.id,
                 "❓ Неизвестная команда. Используйте меню или /help для получения списка команд."
             )
+
+
+def show_download_stats(message):
+    """Показывает статистику скачиваний файлов"""
+    if not download_stats:
+        bot.send_message(
+            message.chat.id,
+            "📊 Статистика скачиваний пуста.\nФайлы еще не скачивались."
+        )
+        return
+
+    # Сортируем файлы по количеству скачиваний
+    sorted_stats = sorted(
+        download_stats.items(),
+        key=lambda x: sum(x[1].values()),
+        reverse=True
+    )
+
+    response = "📊 *СТАТИСТИКА СКАЧИВАНИЙ*\n\n"
+    
+    for file_name, users in sorted_stats:
+        total_downloads = sum(users.values())
+        response += f"📄 *{file_name}*\n"
+        response += f"📥 Всего скачиваний: *{total_downloads}*\n"
+        
+        # Показываем топ-3 пользователей
+        top_users = sorted(users.items(), key=lambda x: x[1], reverse=True)[:3]
+        if top_users:
+            response += "👥 Топ скачивающих:\n"
+            for user_id, count in top_users:
+                # Получаем информацию о пользователе
+                try:
+                    user = bot.get_chat_member(message.chat.id, int(user_id))
+                    user_name = user.user.first_name
+                    if user.user.last_name:
+                        user_name += f" {user.user.last_name}"
+                    username = f" (@{user.user.username})" if user.user.username else ""
+                except:
+                    user_name = f"Пользователь {user_id}"
+                    username = ""
+                response += f"• {user_name}{username}: {count} раз\n"
+        response += "\n"
+
+    bot.send_message(message.chat.id, response, parse_mode='Markdown')
+
+
+def show_brief_stats(message):
+    """Показывает краткую статистику скачиваний файлов"""
+    if not download_stats:
+        bot.send_message(
+            message.chat.id,
+            "📊 Статистика скачиваний пуста.\nФайлы еще не скачивались."
+        )
+        return
+
+    # Сортируем файлы по количеству скачиваний
+    sorted_stats = sorted(
+        download_stats.items(),
+        key=lambda x: sum(x[1].values()),
+        reverse=True
+    )
+
+    response = "📈 *КРАТКАЯ СТАТИСТИКА СКАЧИВАНИЙ*\n\n"
+    
+    for file_name, users in sorted_stats:
+        total_downloads = sum(users.values())
+        response += f"📄 *{file_name}*: {total_downloads} скачиваний\n"
+
+    bot.send_message(message.chat.id, response, parse_mode='Markdown')
 
 
 if __name__ == "__main__":
