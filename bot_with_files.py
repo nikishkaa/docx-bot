@@ -186,26 +186,52 @@ def list_files(message, category, subcategory=None):
     markup = create_files_menu(files, category, subcategory)
     bot.send_message(message.chat.id, response, reply_markup=markup)
 
+@bot.message_handler(commands=['files'])
+def files_command(message):
+    """Обработчик команды /files"""
+    show_all_files(message)
+
 @bot.message_handler(commands=['get'])
-def get_file(message):
+def get_command(message):
+    """Обработчик команды /get"""
     try:
-        file_name = message.text.split()[1] if len(message.text.split()) > 1 else None
-        
-        if not file_name:
+        # Получаем имя файла из команды
+        parts = message.text.split(maxsplit=1)
+        if len(parts) < 2:
             bot.reply_to(message, "❌ Пожалуйста, укажите имя файла.\nПример: /get example.txt")
             return
 
-        file_data = file_handler.get_file(file_name)
-        
-        if file_data is None:
-            bot.reply_to(message, f"❌ Файл {file_name} не найден.")
-            return
+        file_name = parts[1].strip()
+        found = False
 
-        bot.send_document(
-            message.chat.id,
-            file_data,
-            visible_file_name=file_name
-        )
+        # Ищем файл во всех категориях и подкатегориях
+        for category in file_handler.categories:
+            file_data = file_handler.get_file(file_name, category)
+            if file_data is not None:
+                bot.send_document(
+                    message.chat.id,
+                    file_data,
+                    visible_file_name=file_name
+                )
+                found = True
+                break
+            
+            if category in file_handler.subcategories:
+                for subcategory in file_handler.subcategories[category]:
+                    file_data = file_handler.get_file(file_name, category, subcategory)
+                    if file_data is not None:
+                        bot.send_document(
+                            message.chat.id,
+                            file_data,
+                            visible_file_name=file_name
+                        )
+                        found = True
+                        break
+                if found:
+                    break
+        
+        if not found:
+            bot.reply_to(message, f"❌ Файл {file_name} не найден.")
     except Exception as e:
         bot.reply_to(message, f"❌ Произошла ошибка при получении файла: {str(e)}")
 
@@ -449,6 +475,14 @@ def search_files(message):
 @bot.message_handler(commands=['search'])
 def handle_search(message):
     """Обработчик команды поиска"""
+    # Получаем поисковый запрос из команды
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        bot.reply_to(message, "🔍 Укажите поисковый запрос\nПример: /search docker")
+        return
+    
+    # Устанавливаем поисковый запрос и вызываем функцию поиска
+    message.text = parts[1].strip()
     search_files(message)
 
 @bot.message_handler(func=lambda message: True)
@@ -525,10 +559,9 @@ def handle_messages(message):
         except Exception as e:
             bot.reply_to(message, f"❌ Произошла ошибка при получении файла: {str(e)}")
     else:
-        # Если сообщение не является командой, пробуем использовать его как поисковый запрос
+        # Если сообщение не является командой, используем его как поисковый запрос
         search_query = message.text.strip()
         if search_query:
-            message.text = f"/search {search_query}"
             search_files(message)
         else:
             bot.send_message(
