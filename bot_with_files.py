@@ -17,6 +17,9 @@ file_handler = FileHandler()
 # Словарь для хранения информации о загружаемых файлах
 uploading_files = {}
 
+# Словарь для хранения текущего контекста пользователя
+user_context = {}
+
 # Удаляем вебхук перед запуском
 bot.remove_webhook()
 
@@ -29,6 +32,7 @@ bot.set_my_commands([
     types.BotCommand("help", "Показать справку по командам")
 ])
 
+
 def create_main_menu():
     """Создает главное меню с кнопками"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -39,6 +43,7 @@ def create_main_menu():
     btn5 = types.KeyboardButton('❓ Помощь')
     markup.add(btn1, btn2, btn3, btn4, btn5)
     return markup
+
 
 def create_category_menu():
     """Создает меню выбора категории"""
@@ -51,6 +56,7 @@ def create_category_menu():
         markup.add(btn)
     return markup
 
+
 def create_subcategory_menu(category):
     """Создает меню выбора подкатегории"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -60,7 +66,7 @@ def create_subcategory_menu(category):
         types.KeyboardButton('🔙 Вернуться в главное меню')
     ]
     markup.add(*nav_buttons)
-    
+
     # Затем добавляем подкатегории
     if category in file_handler.subcategories:
         for subcategory in file_handler.subcategories[category]:
@@ -68,10 +74,11 @@ def create_subcategory_menu(category):
             markup.add(btn)
     return markup
 
+
 def create_files_menu(files, category, subcategory=None):
     """Создает меню со списком файлов для скачивания"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    
+
     # Сначала добавляем кнопки навигации
     nav_buttons = []
     if subcategory:
@@ -79,13 +86,14 @@ def create_files_menu(files, category, subcategory=None):
     nav_buttons.append(types.KeyboardButton('⬅️ Назад к категориям'))
     nav_buttons.append(types.KeyboardButton('🔙 Вернуться в главное меню'))
     markup.add(*nav_buttons)
-    
+
     # Затем добавляем кнопки для каждого файла
     for file in files:
         btn = types.KeyboardButton(f"📥 {file['name']}")
         markup.add(btn)
-    
+
     return markup
+
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -99,6 +107,7 @@ def start(message):
         reply_markup=markup
     )
 
+
 @bot.message_handler(commands=['help'])
 def help_command(message):
     help_text = (
@@ -111,6 +120,7 @@ def help_command(message):
         "Также вы можете использовать кнопки меню для навигации."
     )
     bot.send_message(message.chat.id, help_text)
+
 
 def show_categories(message, view_only=False):
     """Показывает меню с категориями"""
@@ -128,8 +138,12 @@ def show_categories(message, view_only=False):
             reply_markup=markup
         )
 
+
 def show_subcategories(message, category):
     """Показывает меню с подкатегориями"""
+    # Сохраняем текущую категорию в контексте пользователя
+    user_context[message.chat.id] = {'category': category}
+    
     markup = create_subcategory_menu(category)
     bot.send_message(
         message.chat.id,
@@ -137,8 +151,15 @@ def show_subcategories(message, category):
         reply_markup=markup
     )
 
+
 def list_files(message, category, subcategory=None):
     """Показывает список файлов в выбранной категории или подкатегории"""
+    # Сохраняем текущий контекст
+    user_context[message.chat.id] = {
+        'category': category,
+        'subcategory': subcategory
+    }
+    
     files = file_handler.get_files_list(category, subcategory)
     if not files:
         if subcategory:
@@ -171,7 +192,7 @@ def list_files(message, category, subcategory=None):
         response += "\n"
     
     # Затем показываем файлы
-    response += "📄 Файлы:\n"
+    response += "📑 Файлы:\n"
     for file in files:
         file_path = f"{category}"
         if 'subcategory' in file:
@@ -182,14 +203,16 @@ def list_files(message, category, subcategory=None):
         response += f"📂 Путь: {file_path}\n"
         response += f"📊 Размер: {file['size']}\n"
         response += f"🕒 Дата: {file['date']}\n\n"
-    
+
     markup = create_files_menu(files, category, subcategory)
     bot.send_message(message.chat.id, response, reply_markup=markup)
+
 
 @bot.message_handler(commands=['files'])
 def files_command(message):
     """Обработчик команды /files"""
     show_all_files(message)
+
 
 @bot.message_handler(commands=['get'])
 def get_command(message):
@@ -215,7 +238,7 @@ def get_command(message):
                 )
                 found = True
                 break
-            
+
             if category in file_handler.subcategories:
                 for subcategory in file_handler.subcategories[category]:
                     file_data = file_handler.get_file(file_name, category, subcategory)
@@ -229,11 +252,12 @@ def get_command(message):
                         break
                 if found:
                     break
-        
+
         if not found:
             bot.reply_to(message, f"❌ Файл {file_name} не найден.")
     except Exception as e:
         bot.reply_to(message, f"❌ Произошла ошибка при получении файла: {str(e)}")
+
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
@@ -260,15 +284,18 @@ def handle_document(message):
     )
     bot.register_next_step_handler(message, process_category_selection)
 
+
 def process_category_selection(message):
     """Обработчик выбора категории"""
     if message.text == '🔙 Вернуться в главное меню':
         markup = create_main_menu()
         bot.send_message(message.chat.id, "Главное меню:", reply_markup=markup)
+        # Очищаем контекст при возврате в главное меню
+        user_context.pop(message.chat.id, None)
         return
 
     category = message.text[2:].strip() if message.text.startswith('📂 ') else "Other"
-    
+
     if category in file_handler.subcategories:
         markup = create_subcategory_menu(category)
         bot.send_message(
@@ -280,18 +307,23 @@ def process_category_selection(message):
     else:
         save_file_to_category(message, category)
 
+
 def process_subcategory_selection(message, category):
     """Обработчик выбора подкатегории"""
     if message.text == '🔙 Вернуться в главное меню':
         markup = create_main_menu()
         bot.send_message(message.chat.id, "Главное меню:", reply_markup=markup)
+        # Очищаем контекст при возврате в главное меню
+        user_context.pop(message.chat.id, None)
         return
     elif message.text == '⬅️ Назад к категориям':
         show_categories(message)
+        # Очищаем контекст при возврате к категориям
+        user_context.pop(message.chat.id, None)
         return
 
     subcategory = message.text[2:].strip() if message.text.startswith('📁 ') else None
-    
+
     if subcategory and subcategory in file_handler.subcategories[category]:
         save_file_to_category(message, category, subcategory)
     else:
@@ -301,6 +333,7 @@ def process_subcategory_selection(message, category):
             "❌ Пожалуйста, выберите подкатегорию из списка:",
             reply_markup=markup
         )
+
 
 def save_file_to_category(message, category, subcategory=None):
     """Сохранение файла в выбранную категорию"""
@@ -341,10 +374,10 @@ def save_file_to_category(message, category, subcategory=None):
             category,
             subcategory
         )
-        
+
         # Удаляем информацию о файле после успешного сохранения
         uploading_files.pop(message.chat.id, None)
-        
+
         markup = create_main_menu()
         location = f"подкатегорию {subcategory} категории {category}" if subcategory else f"категорию {category}"
         bot.send_message(
@@ -361,6 +394,7 @@ def save_file_to_category(message, category, subcategory=None):
             f"❌ Произошла ошибка при сохранении файла: {str(e)}",
             reply_markup=markup
         )
+
 
 def show_all_files(message):
     """Показывает все файлы из всех категорий и подкатегорий"""
@@ -384,7 +418,7 @@ def show_all_files(message):
                     all_files.append(file)
     
     if not all_files:
-        bot.send_message(message.chat.id, "Файлы не найдены")
+        bot.send_message(message.chat.id, "📭 Файлы не найдены")
         return
     
     # Сортируем файлы по категории, подкатегории и имени
@@ -397,7 +431,7 @@ def show_all_files(message):
     
     # Разбиваем список на части по 10 файлов
     for i in range(0, len(all_files), 10):
-        chunk = all_files[i:i+10]
+        chunk = all_files[i:i + 10]
         response = ""
         for file in chunk:
             response += f"📄 {file['name']}\n"
@@ -406,20 +440,25 @@ def show_all_files(message):
                 response += f"/{file['subcategory']}"
             response += f"\n📊 Размер: {file['size']}\n"
             response += f"🕒 Дата: {file['date']}\n\n"
-        
+
         # Отправляем часть списка
         if response:  # Отправляем только если есть что отправлять
             bot.send_message(message.chat.id, response)
+    
+    # Отправляем статистику еще раз в конце с эмодзи стрелочки вверх
+    final_counter_message = f"⬆️ *СТАТИСТИКА ФАЙЛОВ*\n\n📚 Всего файлов в системе: *{total_files}*"
+    bot.send_message(message.chat.id, final_counter_message, parse_mode='Markdown')
+
 
 def search_files(message):
     """Поиск файлов по части имени"""
     # Получаем поисковый запрос
     search_query = message.text.strip()
-    
+
     if not search_query:
         bot.reply_to(message, "🔍 Укажите поисковый запрос\nПример: docker")
         return
-    
+
     # Собираем все файлы
     all_files = []
     for category in file_handler.categories:
@@ -428,7 +467,7 @@ def search_files(message):
         for file in files:
             file['category'] = category
             all_files.append(file)
-        
+
         # Получаем файлы из подкатегорий
         if category in file_handler.subcategories:
             for subcategory in file_handler.subcategories[category]:
@@ -437,29 +476,29 @@ def search_files(message):
                     file['category'] = category
                     file['subcategory'] = subcategory
                     all_files.append(file)
-    
+
     # Ищем файлы, содержащие поисковый запрос
     found_files = []
     search_query = search_query.lower()
     for file in all_files:
         if search_query in file['name'].lower():
             found_files.append(file)
-    
+
     if not found_files:
         bot.reply_to(message, f"🔍 По запросу '{search_query}' ничего не найдено")
         return
-    
+
     # Сортируем найденные файлы
     found_files.sort(key=lambda x: (x['category'], x.get('subcategory', ''), x['name']))
-    
+
     # Отправляем статистику поиска
     total_found = len(found_files)
     counter_message = f"🔍 *РЕЗУЛЬТАТЫ ПОИСКА*\n\n📚 Найдено файлов: *{total_found}*\n🔎 Поисковый запрос: *{search_query}*"
     bot.send_message(message.chat.id, counter_message, parse_mode='Markdown')
-    
+
     # Отправляем найденные файлы
     for i in range(0, len(found_files), 10):
-        chunk = found_files[i:i+10]
+        chunk = found_files[i:i + 10]
         response = ""
         for file in chunk:
             response += f"📄 {file['name']}\n"
@@ -468,9 +507,10 @@ def search_files(message):
                 response += f"/{file['subcategory']}"
             response += f"\n📊 Размер: {file['size']}\n"
             response += f"🕒 Дата: {file['date']}\n\n"
-        
+
         if response:
             bot.send_message(message.chat.id, response)
+
 
 @bot.message_handler(commands=['search'])
 def handle_search(message):
@@ -480,10 +520,11 @@ def handle_search(message):
     if len(parts) < 2:
         bot.reply_to(message, "🔍 Укажите поисковый запрос\nПример: /search docker")
         return
-    
+
     # Устанавливаем поисковый запрос и вызываем функцию поиска
     message.text = parts[1].strip()
     search_files(message)
+
 
 @bot.message_handler(func=lambda message: True)
 def handle_messages(message):
@@ -511,8 +552,22 @@ def handle_messages(message):
             "Главное меню:",
             reply_markup=markup
         )
+        # Очищаем контекст при возврате в главное меню
+        user_context.pop(message.chat.id, None)
     elif message.text == '⬅️ Назад к категориям':
         show_categories(message)
+        # Очищаем контекст при возврате к категориям
+        user_context.pop(message.chat.id, None)
+    elif message.text == '⬅️ Назад к подкатегориям':
+        # Получаем текущий контекст пользователя
+        context = user_context.get(message.chat.id, {})
+        category = context.get('category')
+        
+        if category and category in file_handler.subcategories:
+            show_subcategories(message, category)
+        else:
+            # Если контекст не найден, возвращаемся к категориям
+            show_categories(message)
     elif message.text.startswith('📂 '):
         category = message.text[2:].strip()
         if category in file_handler.subcategories:
@@ -521,10 +576,18 @@ def handle_messages(message):
             list_files(message, category)
     elif message.text.startswith('📁 '):
         subcategory = message.text[2:].strip()
-        for category in file_handler.subcategories:
-            if subcategory in file_handler.subcategories[category]:
-                list_files(message, category, subcategory)
-                break
+        # Получаем текущий контекст пользователя
+        context = user_context.get(message.chat.id, {})
+        category = context.get('category')
+        
+        if category and subcategory in file_handler.subcategories.get(category, []):
+            list_files(message, category, subcategory)
+        else:
+            # Если контекст не найден, ищем категорию с этой подкатегорией
+            for cat in file_handler.subcategories:
+                if subcategory in file_handler.subcategories[cat]:
+                    list_files(message, cat, subcategory)
+                    break
     elif message.text.startswith('📥 '):
         file_name = message.text[2:].strip()
         try:
@@ -568,6 +631,7 @@ def handle_messages(message):
                 message.chat.id,
                 "❓ Неизвестная команда. Используйте меню или /help для получения списка команд."
             )
+
 
 if __name__ == "__main__":
     print("Бот запущен...")
