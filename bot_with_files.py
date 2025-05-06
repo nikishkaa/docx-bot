@@ -121,8 +121,9 @@ def create_additional_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     btn1 = types.KeyboardButton('📊 Статистика скачиваний')
     btn2 = types.KeyboardButton('📈 Краткая статистика')
-    btn3 = types.KeyboardButton('🔙 Вернуться в главное меню')
-    markup.add(btn1, btn2, btn3)
+    btn3 = types.KeyboardButton('👤 Мои скачивания')
+    btn4 = types.KeyboardButton('🔙 Вернуться в главное меню')
+    markup.add(btn1, btn2, btn3, btn4)
     return markup
 
 
@@ -610,6 +611,8 @@ def handle_messages(message):
         show_download_stats(message)
     elif message.text == '📈 Краткая статистика':
         show_brief_stats(message)
+    elif message.text == '👤 Мои скачивания':
+        show_user_downloads(message)
     elif message.text == '🔙 Вернуться в главное меню':
         markup = create_main_menu()
         bot.send_message(
@@ -773,6 +776,54 @@ def show_brief_stats(message):
     for file_name, users in sorted_stats:
         total_downloads = sum(users.values())
         response += f"📄 *{file_name}*: {total_downloads} скачиваний\n"
+
+    bot.send_message(message.chat.id, response, parse_mode='Markdown')
+
+
+def show_user_downloads(message):
+    """Показывает статистику скачиваний конкретного пользователя"""
+    user_id = str(message.from_user.id)
+    user_files = {}
+    
+    # Собираем все файлы, которые скачивал пользователь
+    for file_name, users in download_stats.items():
+        if user_id in users:
+            user_files[file_name] = users[user_id]
+    
+    if not user_files:
+        bot.send_message(
+            message.chat.id,
+            "📭 У вас пока нет скачанных файлов."
+        )
+        return
+
+    # Сортируем файлы по количеству скачиваний
+    sorted_files = sorted(
+        user_files.items(),
+        key=lambda x: x[1],
+        reverse=True
+    )
+
+    # Получаем информацию о пользователе
+    try:
+        user = bot.get_chat_member(message.chat.id, int(user_id))
+        user_name = user.user.first_name
+        if user.user.last_name:
+            user_name += f" {user.user.last_name}"
+        username = f" (@{user.user.username})" if user.user.username else ""
+    except:
+        user_name = f"Пользователь {user_id}"
+        username = ""
+
+    response = f"👤 *СТАТИСТИКА СКАЧИВАНИЙ*\n\n"
+    response += f"Пользователь: *{user_name}{username}*\n\n"
+    
+    total_downloads = sum(user_files.values())
+    response += f"📥 Всего скачано файлов: *{total_downloads}*\n\n"
+    
+    response += "📄 *Список скачанных файлов:*\n\n"
+    for file_name, count in sorted_files:
+        response += f"• *{file_name}*: {count} раз\n"
 
     bot.send_message(message.chat.id, response, parse_mode='Markdown')
 
