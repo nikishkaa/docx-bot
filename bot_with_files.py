@@ -5,6 +5,8 @@ import os
 import json
 from dotenv import load_dotenv
 from error_logger import log_error
+import zipfile
+import io
 
 # Загружаем переменные окружения из файла .env
 load_dotenv()
@@ -133,7 +135,8 @@ def create_additional_menu():
     btn2 = types.KeyboardButton('📊 Статистика скачиваний')
     btn3 = types.KeyboardButton('📈 Краткая статистика')
     btn4 = types.KeyboardButton('👤 Мои скачивания')
-    markup.add(btn1, btn2, btn3, btn4)
+    btn5 = types.KeyboardButton('📦 Скачать архив со всеми файлами')
+    markup.add(btn1, btn2, btn3, btn4, btn5)
     return markup
 
 
@@ -626,6 +629,8 @@ def handle_messages(message):
         show_brief_stats(message)
     elif message.text == '👤 Мои скачивания':
         show_user_downloads(message)
+    elif message.text == '📦 Скачать архив со всеми файлами':
+        create_archive(message)
     elif message.text == '🔙 Вернуться в главное меню':
         markup = create_main_menu()
         bot.send_message(
@@ -748,30 +753,72 @@ def show_download_stats(message):
 
     response = "📊 *СТАТИСТИКА СКАЧИВАНИЙ*\n\n"
     
+    # Сначала показываем статистику архива, если он есть
+    archive_stats = next((item for item in sorted_stats if item[0] == "📦 programming-documentation.zip"), None)
+    if archive_stats:
+        file_name, users = archive_stats
+        total_downloads = sum(users.values())
+        response += f"📦 *Архив с документацией*\n"
+        response += f"📥 Всего скачиваний: *{total_downloads}*\n"
+        # Показываем всех пользователей
+        if users:
+            response += "👥 *Список скачавших:*\n"
+            sorted_users = sorted(users.items(), key=lambda x: x[1], reverse=True)
+            for user_id, count in sorted_users:
+                try:
+                    # Пробуем получить информацию о пользователе
+                    user = bot.get_chat_member(message.chat.id, int(user_id))
+                    if user and user.user:
+                        user_name = user.user.first_name
+                        if user.user.last_name:
+                            user_name += f" {user.user.last_name}"
+                        username = f" (@{user.user.username})" if user.user.username else ""
+                    else:
+                        user_name = f"Пользователь {user_id}"
+                        username = ""
+                except Exception as e:
+                    user_name = f"Пользователь {user_id}"
+                    username = ""
+                response += f"• {user_name}{username}: {count} раз\n"
+        response += "\n"
+    
+    # Затем показываем статистику остальных файлов
     for file_name, users in sorted_stats:
+        if file_name == "📦 programming-documentation.zip":  # Пропускаем архив, так как уже показали
+            continue
         total_downloads = sum(users.values())
         response += f"📄 *{file_name}*\n"
         response += f"📥 Всего скачиваний: *{total_downloads}*\n"
         
-        # Показываем топ-3 пользователей
-        top_users = sorted(users.items(), key=lambda x: x[1], reverse=True)[:3]
-        if top_users:
-            response += "👥 Топ скачивающих:\n"
-            for user_id, count in top_users:
-                # Получаем информацию о пользователе
+        # Показываем всех пользователей
+        if users:
+            response += "👥 *Список скачавших:*\n"
+            sorted_users = sorted(users.items(), key=lambda x: x[1], reverse=True)
+            for user_id, count in sorted_users:
                 try:
+                    # Пробуем получить информацию о пользователе
                     user = bot.get_chat_member(message.chat.id, int(user_id))
-                    user_name = user.user.first_name
-                    if user.user.last_name:
-                        user_name += f" {user.user.last_name}"
-                    username = f" (@{user.user.username})" if user.user.username else ""
-                except:
+                    if user and user.user:
+                        user_name = user.user.first_name
+                        if user.user.last_name:
+                            user_name += f" {user.user.last_name}"
+                        username = f" (@{user.user.username})" if user.user.username else ""
+                    else:
+                        user_name = f"Пользователь {user_id}"
+                        username = ""
+                except Exception as e:
                     user_name = f"Пользователь {user_id}"
                     username = ""
                 response += f"• {user_name}{username}: {count} раз\n"
         response += "\n"
 
-    bot.send_message(message.chat.id, response, parse_mode='Markdown')
+    # Разбиваем сообщение на части, если оно слишком длинное
+    if len(response) > 4000:
+        parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
+        for part in parts:
+            bot.send_message(message.chat.id, part, parse_mode='Markdown')
+    else:
+        bot.send_message(message.chat.id, response, parse_mode='Markdown')
 
 
 def show_brief_stats(message):
@@ -792,9 +839,25 @@ def show_brief_stats(message):
 
     response = "📈 *КРАТКАЯ СТАТИСТИКА СКАЧИВАНИЙ*\n\n"
     
-    for file_name, users in sorted_stats:
+    # Сначала показываем статистику архива, если он есть
+    archive_stats = next((item for item in sorted_stats if item[0] == "📦 programming-documentation.zip"), None)
+    if archive_stats:
+        file_name, users = archive_stats
         total_downloads = sum(users.values())
-        response += f"📄 *{file_name}*: {total_downloads} скачиваний\n"
+        unique_users = len(users)
+        response += f"📦 *Архив с документацией*\n"
+        response += f"📥 Всего скачиваний: *{total_downloads}*\n"
+        response += f"👥 Уникальных скачавших: *{unique_users}*\n\n"
+    
+    # Затем показываем статистику остальных файлов
+    for file_name, users in sorted_stats:
+        if file_name == "📦 programming-documentation.zip":  # Пропускаем архив, так как уже показали
+            continue
+        total_downloads = sum(users.values())
+        unique_users = len(users)
+        response += f"📄 *{file_name}*\n"
+        response += f"📥 Всего скачиваний: *{total_downloads}*\n"
+        response += f"👥 Уникальных скачавших: *{unique_users}*\n\n"
 
     bot.send_message(message.chat.id, response, parse_mode='Markdown')
 
@@ -826,11 +889,15 @@ def show_user_downloads(message):
     # Получаем информацию о пользователе
     try:
         user = bot.get_chat_member(message.chat.id, int(user_id))
-        user_name = user.user.first_name
-        if user.user.last_name:
-            user_name += f" {user.user.last_name}"
-        username = f" (@{user.user.username})" if user.user.username else ""
-    except:
+        if user and user.user:
+            user_name = user.user.first_name
+            if user.user.last_name:
+                user_name += f" {user.user.last_name}"
+            username = f" (@{user.user.username})" if user.user.username else ""
+        else:
+            user_name = f"Пользователь {user_id}"
+            username = ""
+    except Exception as e:
         user_name = f"Пользователь {user_id}"
         username = ""
 
@@ -838,13 +905,67 @@ def show_user_downloads(message):
     response += f"Пользователь: *{user_name}{username}*\n\n"
     
     total_downloads = sum(user_files.values())
-    response += f"📥 Всего скачано файлов: *{total_downloads}*\n\n"
+    unique_files = len(user_files)
+    response += f"📥 Всего скачано файлов: *{total_downloads}*\n"
+    response += f"📄 Уникальных файлов: *{unique_files}*\n\n"
     
     response += "📄 *Список скачанных файлов:*\n\n"
+    
+    # Сначала показываем архив, если он есть
+    archive_downloads = next((item for item in sorted_files if item[0] == "📦 programming-documentation.zip"), None)
+    if archive_downloads:
+        file_name, count = archive_downloads
+        response += f"• 📦 *Архив с документацией*: {count} раз\n"
+    
+    # Затем показываем остальные файлы
     for file_name, count in sorted_files:
+        if file_name == "📦 programming-documentation.zip":  # Пропускаем архив, так как уже показали
+            continue
         response += f"• *{file_name}*: {count} раз\n"
 
     bot.send_message(message.chat.id, response, parse_mode='Markdown')
+
+
+def create_archive(message):
+    """Создает архив со всеми файлами"""
+    try:
+        # Создаем архив в памяти
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            # Проходим по всем категориям
+            for category in file_handler.categories:
+                category_path = os.path.join(file_handler.base_dir, category)
+                if os.path.exists(category_path):
+                    # Добавляем файлы из основной категории
+                    for root, dirs, files in os.walk(category_path):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            # Получаем относительный путь для архива
+                            arcname = os.path.relpath(file_path, file_handler.base_dir)
+                            zipf.write(file_path, arcname)
+
+        # Перемещаем указатель в начало архива
+        archive.seek(0)
+        
+        # Обновляем статистику скачиваний архива
+        archive_name = "📦 programming-documentation.zip"
+        if archive_name not in download_stats:
+            download_stats[archive_name] = {}
+        user_id = str(message.from_user.id)
+        download_stats[archive_name][user_id] = download_stats[archive_name].get(user_id, 0) + 1
+        save_stats()
+        
+        # Отправляем архив
+        bot.send_document(
+            message.chat.id,
+            archive,
+            visible_file_name='programming-documentation.zip',
+            caption="📦 Архив с документацией по программированию"
+        )
+    except Exception as e:
+        error_msg = f"Ошибка при создании архива: {str(e)}"
+        log_error(error_msg, message.from_user.id)
+        bot.reply_to(message, f"❌ {error_msg}")
 
 
 if __name__ == "__main__":
