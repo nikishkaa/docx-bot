@@ -34,8 +34,13 @@ def load_stats():
 
 # Сохраняем статистику в файл
 def save_stats():
-    with open(STATS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(download_stats, f, ensure_ascii=False, indent=2)
+    try:
+        with open(STATS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(download_stats, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        error_msg = f"Ошибка при сохранении статистики: {str(e)}"
+        log_error(error_msg, "system", "save_stats")
+        print(error_msg)  # Выводим ошибку в консоль для отладки
 
 # Инициализируем статистику
 download_stats = load_stats()
@@ -681,7 +686,8 @@ def handle_messages(message):
                     # Обновляем статистику скачиваний
                     if file_name not in download_stats:
                         download_stats[file_name] = {}
-                    download_stats[file_name][str(message.from_user.id)] = download_stats[file_name].get(str(message.from_user.id), 0) + 1
+                    user_id = str(message.from_user.id)
+                    download_stats[file_name][user_id] = download_stats[file_name].get(user_id, 0) + 1
                     save_stats()  # Сохраняем статистику после каждого скачивания
                     found = True
                     break
@@ -698,7 +704,8 @@ def handle_messages(message):
                             # Обновляем статистику скачиваний
                             if file_name not in download_stats:
                                 download_stats[file_name] = {}
-                            download_stats[file_name][str(message.from_user.id)] = download_stats[file_name].get(str(message.from_user.id), 0) + 1
+                            user_id = str(message.from_user.id)
+                            download_stats[file_name][user_id] = download_stats[file_name].get(user_id, 0) + 1
                             save_stats()  # Сохраняем статистику после каждого скачивания
                             found = True
                             break
@@ -708,7 +715,9 @@ def handle_messages(message):
             if not found:
                 bot.reply_to(message, f"❌ Файл {file_name} не найден.")
         except Exception as e:
-            bot.reply_to(message, f"❌ Произошла ошибка при получении файла: {str(e)}")
+            error_msg = f"Произошла ошибка при получении файла: {str(e)}"
+            log_error(error_msg, message.from_user.id, f"File: {file_name}")
+            bot.reply_to(message, f"❌ {error_msg}")
     else:
         # Если сообщение не является командой, используем его как поисковый запрос
         search_query = message.text.strip()
