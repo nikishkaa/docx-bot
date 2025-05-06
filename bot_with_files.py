@@ -4,6 +4,7 @@ from telebot import types
 import os
 import json
 from dotenv import load_dotenv
+from error_logger import log_error
 
 # Загружаем переменные окружения из файла .env
 load_dotenv()
@@ -284,35 +285,48 @@ def get_command(message):
                     break
 
         if not found:
-            bot.reply_to(message, f"❌ Файл {file_name} не найден.")
+            error_msg = f"Файл {file_name} не найден"
+            log_error(error_msg, message.from_user.id, f"Command: /get {file_name}")
+            bot.reply_to(message, f"❌ {error_msg}")
     except Exception as e:
-        bot.reply_to(message, f"❌ Произошла ошибка при получении файла: {str(e)}")
+        error_msg = f"Произошла ошибка при получении файла: {str(e)}"
+        log_error(error_msg, message.from_user.id, f"Command: /get {file_name if 'file_name' in locals() else 'unknown'}")
+        bot.reply_to(message, f"❌ {error_msg}")
 
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
     """Обработчик загрузки файлов"""
-    if not message.document:
-        bot.reply_to(message, "❌ Ошибка: файл не найден в сообщении.")
-        return
+    try:
+        if not message.document:
+            error_msg = "Файл не найден в сообщении"
+            log_error(error_msg, message.from_user.id)
+            bot.reply_to(message, f"❌ {error_msg}")
+            return
 
-    if not message.document.file_id:
-        bot.reply_to(message, "❌ Ошибка: не удалось получить идентификатор файла.")
-        return
+        if not message.document.file_id:
+            error_msg = "Не удалось получить идентификатор файла"
+            log_error(error_msg, message.from_user.id)
+            bot.reply_to(message, f"❌ {error_msg}")
+            return
 
-    # Сохраняем информацию о файле
-    uploading_files[message.chat.id] = {
-        'file_id': message.document.file_id,
-        'file_name': message.document.file_name
-    }
+        # Сохраняем информацию о файле
+        uploading_files[message.chat.id] = {
+            'file_id': message.document.file_id,
+            'file_name': message.document.file_name
+        }
 
-    markup = create_category_menu()
-    bot.send_message(
-        message.chat.id,
-        "📂 Выберите категорию для файла:",
-        reply_markup=markup
-    )
-    bot.register_next_step_handler(message, process_category_selection)
+        markup = create_category_menu()
+        bot.send_message(
+            message.chat.id,
+            "📂 Выберите категорию для файла:",
+            reply_markup=markup
+        )
+        bot.register_next_step_handler(message, process_category_selection)
+    except Exception as e:
+        error_msg = f"Ошибка при обработке документа: {str(e)}"
+        log_error(error_msg, message.from_user.id)
+        bot.reply_to(message, f"❌ {error_msg}")
 
 
 def process_category_selection(message):
@@ -371,17 +385,21 @@ def save_file_to_category(message, category, subcategory=None):
         # Получаем информацию о файле из словаря
         file_info = uploading_files.get(message.chat.id)
         if not file_info:
-            bot.reply_to(message, "❌ Ошибка: информация о файле не найдена.")
+            error_msg = "Информация о файле не найдена"
+            log_error(error_msg, message.from_user.id)
+            bot.reply_to(message, f"❌ {error_msg}")
             return
 
         # Проверяем, существует ли файл с таким именем
         existing_files = file_handler.get_files_list(category, subcategory)
         for file in existing_files:
             if file['name'] == file_info['file_name']:
+                error_msg = f"Файл с именем {file_info['file_name']} уже существует в этой категории"
+                log_error(error_msg, message.from_user.id, f"Category: {category}, Subcategory: {subcategory}")
                 markup = create_main_menu()
                 bot.send_message(
                     message.chat.id,
-                    f"❌ Файл с именем {file_info['file_name']} уже существует в этой категории.",
+                    f"❌ {error_msg}",
                     reply_markup=markup
                 )
                 uploading_files.pop(message.chat.id, None)
@@ -389,12 +407,16 @@ def save_file_to_category(message, category, subcategory=None):
 
         file_data = bot.get_file(file_info['file_id'])
         if not file_data:
-            bot.reply_to(message, "❌ Ошибка: не удалось получить информацию о файле.")
+            error_msg = "Не удалось получить информацию о файле"
+            log_error(error_msg, message.from_user.id)
+            bot.reply_to(message, f"❌ {error_msg}")
             return
 
         downloaded_file = bot.download_file(file_data.file_path)
         if not downloaded_file:
-            bot.reply_to(message, "❌ Ошибка: не удалось скачать файл.")
+            error_msg = "Не удалось скачать файл"
+            log_error(error_msg, message.from_user.id)
+            bot.reply_to(message, f"❌ {error_msg}")
             return
 
         file_handler.save_file(
@@ -418,10 +440,12 @@ def save_file_to_category(message, category, subcategory=None):
     except Exception as e:
         # Удаляем информацию о файле в случае ошибки
         uploading_files.pop(message.chat.id, None)
+        error_msg = f"Произошла ошибка при сохранении файла: {str(e)}"
+        log_error(error_msg, message.from_user.id, f"Category: {category}, Subcategory: {subcategory}")
         markup = create_main_menu()
         bot.send_message(
             message.chat.id,
-            f"❌ Произошла ошибка при сохранении файла: {str(e)}",
+            f"❌ {error_msg}",
             reply_markup=markup
         )
 
@@ -590,7 +614,7 @@ def handle_messages(message):
         markup = create_main_menu()
         bot.send_message(
             message.chat.id,
-            "Главное меню:",
+            "🏠 Главное меню:",
             reply_markup=markup
         )
         # Очищаем контекст при возврате в главное меню
