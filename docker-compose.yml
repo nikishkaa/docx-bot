@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: telegram_file_bot
+    volumes:
+      - ./uploads:/app/uploads
+      - ./download_stats.json:/app/download_stats.json
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - bot_network
+
+networks:
+  bot_network:
+    driver: bridge 

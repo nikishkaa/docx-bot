@@ -4,7 +4,7 @@ from datetime import datetime
 class FileHandler:
     def __init__(self):
         self.base_dir = "uploads"
-        self.categories = ["Java", "AI", "DevOps", "Other"]
+        self.categories = ["Java", "Книги", "AI", "DevOps", "Other"]
         self.subcategories = {
             "DevOps": ["Docker", "Kubernetes", "Other"]
         }

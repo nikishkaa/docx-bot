@@ -69,12 +69,17 @@ def create_main_menu():
 def create_category_menu():
     """Создает меню выбора категории"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    # Сначала добавляем кнопки навигации
+    # Сначала добавляем кнопку возврата в главное меню
     markup.add(types.KeyboardButton('🔙 Вернуться в главное меню'))
-    # Затем добавляем категории
+    
+    # Добавляем кнопку "Книги" сразу после кнопки возврата
+    markup.add(types.KeyboardButton('📚 Книги'))
+    
+    # Затем добавляем остальные категории
     for category in file_handler.categories:
-        btn = types.KeyboardButton(f"📂 {category}")
-        markup.add(btn)
+        if category != "Книги":  # Пропускаем "Книги", так как уже добавили
+            btn = types.KeyboardButton(f"📂 {category}")
+            markup.add(btn)
     return markup
 
 
@@ -119,10 +124,10 @@ def create_files_menu(files, category, subcategory=None):
 def create_additional_menu():
     """Создает меню дополнительных функций"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    btn1 = types.KeyboardButton('📊 Статистика скачиваний')
-    btn2 = types.KeyboardButton('📈 Краткая статистика')
-    btn3 = types.KeyboardButton('👤 Мои скачивания')
-    btn4 = types.KeyboardButton('🔙 Вернуться в главное меню')
+    btn1 = types.KeyboardButton('🔙 Вернуться в главное меню')
+    btn2 = types.KeyboardButton('📊 Статистика скачиваний')
+    btn3 = types.KeyboardButton('📈 Краткая статистика')
+    btn4 = types.KeyboardButton('👤 Мои скачивания')
     markup.add(btn1, btn2, btn3, btn4)
     return markup
 
@@ -536,7 +541,10 @@ def search_files(message):
     found_files = []
     search_query = search_query.lower()
     for file in all_files:
-        if search_query in file['name'].lower():
+        # Проверяем имя файла и категорию
+        if (search_query in file['name'].lower() or 
+            (search_query == 'книги' and file['category'] == 'Книги') or
+            (search_query == '📚 книги' and file['category'] == 'Книги')):
             found_files.append(file)
 
     if not found_files:
@@ -636,8 +644,10 @@ def handle_messages(message):
         else:
             # Если контекст не найден, возвращаемся к категориям
             show_categories(message)
-    elif message.text.startswith('📂 '):
-        category = message.text[2:].strip()
+    elif message.text.startswith('📂 ') or message.text == '📚 Книги':
+        # Получаем название категории, убирая смайлик
+        category = message.text[2:].strip() if message.text.startswith('📂 ') else "Книги"
+        
         if category in file_handler.subcategories:
             show_subcategories(message, category)
         else:
