@@ -7,6 +7,83 @@ from dotenv import load_dotenv
 from error_logger import log_error
 import zipfile
 import io
+import logging
+from datetime import datetime
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import time
+import signal
+import sys
+from tqdm import tqdm
+import gc
+
+
+# Цвета для логов
+class ColoredFormatter(logging.Formatter):
+    """Форматтер для цветных логов"""
+
+    grey = "\x1b[38;21m"
+    blue = "\x1b[38;5;39m"
+    yellow = "\x1b[38;5;226m"
+    red = "\x1b[38;5;196m"
+    bold_red = "\x1b[31;1m"
+    green = "\x1b[38;5;46m"
+    reset = "\x1b[0m"
+
+    def __init__(self, fmt):
+        super().__init__()
+        self.fmt = fmt
+        self.FORMATS = {
+            logging.DEBUG: self.grey + self.fmt + self.reset,
+            logging.INFO: self.green + self.fmt + self.reset,
+            logging.WARNING: self.yellow + self.fmt + self.reset,
+            logging.ERROR: self.red + self.fmt + self.reset,
+            logging.CRITICAL: self.bold_red + self.fmt + self.reset
+        }
+
+    def format(self, record):
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt)
+        return formatter.format(record)
+
+
+# Настройка логирования
+def setup_logging():
+    """Настройка логирования с цветным выводом"""
+    # Формат для логов
+    log_format = '%(asctime)s - %(levelname)s - %(message)s'
+
+    # Создаем форматтер
+    colored_formatter = ColoredFormatter(log_format)
+    file_formatter = logging.Formatter(log_format)
+
+    # Создаем обработчики
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(colored_formatter)
+
+    file_handler = logging.FileHandler('bot.log', encoding='utf-8')
+    file_handler.setFormatter(file_formatter)
+
+    # Настраиваем корневой логгер
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    # Очищаем существующие обработчики
+    root_logger.handlers = []
+
+    # Добавляем обработчики
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
+
+
+# Инициализируем логирование
+setup_logging()
+logger = logging.getLogger(__name__)
+
+# Глобальные переменные для модели
+model = None
+tokenizer = None
+model_loaded = False
 
 # Загружаем переменные окружения из файла .env
 load_dotenv()
@@ -27,12 +104,14 @@ user_context = {}
 # Путь к файлу статистики
 STATS_FILE = 'download_stats.json'
 
+
 # Загружаем статистику из файла при запуске
 def load_stats():
     if os.path.exists(STATS_FILE):
         with open(STATS_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     return {}
+
 
 # Сохраняем статистику в файл
 def save_stats():
@@ -43,6 +122,7 @@ def save_stats():
         error_msg = f"Ошибка при сохранении статистики: {str(e)}"
         log_error(error_msg, "system", "save_stats")
         print(error_msg)  # Выводим ошибку в консоль для отладки
+
 
 # Инициализируем статистику
 download_stats = load_stats()
@@ -78,10 +158,10 @@ def create_category_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     # Сначала добавляем кнопку возврата в главное меню
     markup.add(types.KeyboardButton('🔙 Вернуться в главное меню'))
-    
+
     # Добавляем кнопку "Книги" сразу после кнопки возврата
     markup.add(types.KeyboardButton('📚 Книги'))
-    
+
     # Затем добавляем остальные категории
     for category in file_handler.categories:
         if category != "Книги":  # Пропускаем "Книги", так как уже добавили
@@ -136,7 +216,8 @@ def create_additional_menu():
     btn3 = types.KeyboardButton('📈 Краткая статистика')
     btn4 = types.KeyboardButton('👤 Мои скачивания')
     btn5 = types.KeyboardButton('📦 Скачать архив со всеми файлами')
-    markup.add(btn1, btn2, btn3, btn4, btn5)
+    btn6 = types.KeyboardButton('🤖 Чат с AI')
+    markup.add(btn1, btn2, btn3, btn4, btn5, btn6)
     return markup
 
 
@@ -188,7 +269,7 @@ def show_subcategories(message, category):
     """Показывает меню с подкатегориями"""
     # Сохраняем текущую категорию в контексте пользователя
     user_context[message.chat.id] = {'category': category}
-    
+
     markup = create_subcategory_menu(category)
     bot.send_message(
         message.chat.id,
@@ -204,7 +285,7 @@ def list_files(message, category, subcategory=None):
         'category': category,
         'subcategory': subcategory
     }
-    
+
     files = file_handler.get_files_list(category, subcategory)
     if not files:
         if subcategory:
@@ -228,14 +309,14 @@ def list_files(message, category, subcategory=None):
         response += f"подкатегории {subcategory} категории {category}:\n\n"
     else:
         response += f"категории {category}:\n\n"
-    
+
     # Сначала показываем подкатегории, если они есть
     if not subcategory and category in file_handler.subcategories:
         response += "📂 Подкатегории:\n"
         for subcat in file_handler.subcategories[category]:
             response += f"📁 {subcat}\n"
         response += "\n"
-    
+
     # Затем показываем файлы
     response += "📑 Файлы:\n"
     for file in files:
@@ -243,7 +324,7 @@ def list_files(message, category, subcategory=None):
         if 'subcategory' in file:
             file_path += f"/{file['subcategory']}"
         file_path += f"/{file['name']}"
-        
+
         response += f"📄 {file['name']}\n"
         response += f"📂 Путь: {file_path}\n"
         response += f"📊 Размер: {file['size']}\n"
@@ -304,7 +385,8 @@ def get_command(message):
             bot.reply_to(message, f"❌ {error_msg}")
     except Exception as e:
         error_msg = f"Произошла ошибка при получении файла: {str(e)}"
-        log_error(error_msg, message.from_user.id, f"Command: /get {file_name if 'file_name' in locals() else 'unknown'}")
+        log_error(error_msg, message.from_user.id,
+                  f"Command: /get {file_name if 'file_name' in locals() else 'unknown'}")
         bot.reply_to(message, f"❌ {error_msg}")
 
 
@@ -467,7 +549,7 @@ def save_file_to_category(message, category, subcategory=None):
 def show_all_files(message):
     """Показывает все файлы из всех категорий и подкатегорий"""
     all_files = []
-    
+
     # Собираем файлы из всех категорий и подкатегорий
     for category in file_handler.categories:
         # Получаем файлы из основной категории
@@ -475,7 +557,7 @@ def show_all_files(message):
         for file in files:
             file['category'] = category
             all_files.append(file)
-        
+
         # Получаем файлы из подкатегорий
         if category in file_handler.subcategories:
             for subcategory in file_handler.subcategories[category]:
@@ -484,19 +566,19 @@ def show_all_files(message):
                     file['category'] = category
                     file['subcategory'] = subcategory
                     all_files.append(file)
-    
+
     if not all_files:
         bot.send_message(message.chat.id, "📭 Файлы не найдены")
         return
-    
+
     # Сортируем файлы по категории, подкатегории и имени
     all_files.sort(key=lambda x: (x['category'], x.get('subcategory', ''), x['name']))
-    
+
     # Отправляем общее количество файлов с эмодзи и выделением
     total_files = len(all_files)
     counter_message = f"📊 *СТАТИСТИКА ФАЙЛОВ*\n\n📚 Всего файлов в системе: *{total_files}*"
     bot.send_message(message.chat.id, counter_message, parse_mode='Markdown')
-    
+
     # Разбиваем список на части по 10 файлов
     for i in range(0, len(all_files), 10):
         chunk = all_files[i:i + 10]
@@ -512,7 +594,7 @@ def show_all_files(message):
         # Отправляем часть списка
         if response:  # Отправляем только если есть что отправлять
             bot.send_message(message.chat.id, response)
-    
+
     # Отправляем статистику еще раз в конце с эмодзи стрелочки вверх
     final_counter_message = f"⬆️ *СТАТИСТИКА ФАЙЛОВ*\n\n📚 Всего файлов в системе: *{total_files}*"
     bot.send_message(message.chat.id, final_counter_message, parse_mode='Markdown')
@@ -550,9 +632,9 @@ def search_files(message):
     search_query = search_query.lower()
     for file in all_files:
         # Проверяем имя файла и категорию
-        if (search_query in file['name'].lower() or 
-            (search_query == 'книги' and file['category'] == 'Книги') or
-            (search_query == '📚 книги' and file['category'] == 'Книги')):
+        if (search_query in file['name'].lower() or
+                (search_query == 'книги' and file['category'] == 'Книги') or
+                (search_query == '📚 книги' and file['category'] == 'Книги')):
             found_files.append(file)
 
     if not found_files:
@@ -597,6 +679,10 @@ def handle_search(message):
     search_files(message)
 
 
+# Словарь для отслеживания режима чата пользователей
+user_chat_mode = {}
+
+
 @bot.message_handler(func=lambda message: True)
 def handle_messages(message):
     if message.text == '📥 Скачать файлы':
@@ -631,6 +717,13 @@ def handle_messages(message):
         show_user_downloads(message)
     elif message.text == '📦 Скачать архив со всеми файлами':
         create_archive(message)
+    elif message.text == '🤖 Чат с AI':
+        user_chat_mode[message.chat.id] = True
+        bot.send_message(
+            message.chat.id,
+            "🤖 Режим чата с AI активирован. Задайте свой вопрос.\n"
+            "Для выхода из режима чата отправьте '🔙 Вернуться в главное меню'"
+        )
     elif message.text == '🔙 Вернуться в главное меню':
         markup = create_main_menu()
         bot.send_message(
@@ -638,8 +731,12 @@ def handle_messages(message):
             "🏠 Главное меню:",
             reply_markup=markup
         )
-        # Очищаем контекст при возврате в главное меню
+        # Очищаем контекст и режим чата при возврате в главное меню
         user_context.pop(message.chat.id, None)
+        user_chat_mode.pop(message.chat.id, None)
+        # Выгружаем модель при выходе из режима чата
+        if model_loaded:
+            unload_model()
     elif message.text == '⬅️ Назад к категориям':
         show_categories(message)
         # Очищаем контекст при возврате к категориям
@@ -648,7 +745,7 @@ def handle_messages(message):
         # Получаем текущий контекст пользователя
         context = user_context.get(message.chat.id, {})
         category = context.get('category')
-        
+
         if category and category in file_handler.subcategories:
             show_subcategories(message, category)
         else:
@@ -657,7 +754,7 @@ def handle_messages(message):
     elif message.text.startswith('📂 ') or message.text == '📚 Книги':
         # Получаем название категории, убирая смайлик
         category = message.text[2:].strip() if message.text.startswith('📂 ') else "Книги"
-        
+
         if category in file_handler.subcategories:
             show_subcategories(message, category)
         else:
@@ -667,7 +764,7 @@ def handle_messages(message):
         # Получаем текущий контекст пользователя
         context = user_context.get(message.chat.id, {})
         category = context.get('category')
-        
+
         if category and subcategory in file_handler.subcategories.get(category, []):
             list_files(message, category, subcategory)
         else:
@@ -696,7 +793,7 @@ def handle_messages(message):
                     save_stats()  # Сохраняем статистику после каждого скачивания
                     found = True
                     break
-                
+
                 if category in file_handler.subcategories:
                     for subcategory in file_handler.subcategories[category]:
                         file_data = file_handler.get_file(file_name, category, subcategory)
@@ -716,7 +813,7 @@ def handle_messages(message):
                             break
                     if found:
                         break
-            
+
             if not found:
                 bot.reply_to(message, f"❌ Файл {file_name} не найден.")
         except Exception as e:
@@ -724,15 +821,41 @@ def handle_messages(message):
             log_error(error_msg, message.from_user.id, f"File: {file_name}")
             bot.reply_to(message, f"❌ {error_msg}")
     else:
-        # Если сообщение не является командой, используем его как поисковый запрос
-        search_query = message.text.strip()
-        if search_query:
-            search_files(message)
+        # Проверяем, находится ли пользователь в режиме чата с AI
+        if user_chat_mode.get(message.chat.id):
+            try:
+                # Отправляем сообщение о загрузке модели
+                loading_msg = bot.send_message(
+                    message.chat.id,
+                    "⏳ Загружаю модель для ответа на ваш вопрос..."
+                )
+
+                # Генерируем ответ
+                response = get_ai_response(message.text)
+
+                # Удаляем сообщение о загрузке
+                bot.delete_message(message.chat.id, loading_msg.message_id)
+
+                # Отправляем ответ
+                bot.reply_to(message, response)
+
+            except Exception as e:
+                logger.error(f"Ошибка при обработке сообщения в режиме чата: {e}", exc_info=True)
+                bot.reply_to(
+                    message,
+                    "❌ Произошла ошибка при обработке сообщения. Пожалуйста, попробуйте еще раз."
+                )
         else:
-            bot.send_message(
-                message.chat.id,
-                "❓ Неизвестная команда. Используйте меню или /help для получения списка команд."
-            )
+            # Если сообщение не является командой и пользователь не в режиме чата,
+            # используем его как поисковый запрос
+            search_query = message.text.strip()
+            if search_query:
+                search_files(message)
+            else:
+                bot.send_message(
+                    message.chat.id,
+                    "❓ Неизвестная команда. Используйте меню или /help для получения списка команд."
+                )
 
 
 def show_download_stats(message):
@@ -752,7 +875,7 @@ def show_download_stats(message):
     )
 
     response = "📊 *СТАТИСТИКА СКАЧИВАНИЙ*\n\n"
-    
+
     # Сначала показываем статистику архива, если он есть
     archive_stats = next((item for item in sorted_stats if item[0] == "📦 programming-documentation.zip"), None)
     if archive_stats:
@@ -781,7 +904,7 @@ def show_download_stats(message):
                     username = ""
                 response += f"• {user_name}{username}: {count} раз\n"
         response += "\n"
-    
+
     # Затем показываем статистику остальных файлов
     for file_name, users in sorted_stats:
         if file_name == "📦 programming-documentation.zip":  # Пропускаем архив, так как уже показали
@@ -789,7 +912,7 @@ def show_download_stats(message):
         total_downloads = sum(users.values())
         response += f"📄 *{file_name}*\n"
         response += f"📥 Всего скачиваний: *{total_downloads}*\n"
-        
+
         # Показываем всех пользователей
         if users:
             response += "👥 *Список скачавших:*\n"
@@ -814,7 +937,7 @@ def show_download_stats(message):
 
     # Разбиваем сообщение на части, если оно слишком длинное
     if len(response) > 4000:
-        parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
+        parts = [response[i:i + 4000] for i in range(0, len(response), 4000)]
         for part in parts:
             bot.send_message(message.chat.id, part, parse_mode='Markdown')
     else:
@@ -838,7 +961,7 @@ def show_brief_stats(message):
     )
 
     response = "📈 *КРАТКАЯ СТАТИСТИКА СКАЧИВАНИЙ*\n\n"
-    
+
     # Сначала показываем статистику архива, если он есть
     archive_stats = next((item for item in sorted_stats if item[0] == "📦 programming-documentation.zip"), None)
     if archive_stats:
@@ -848,7 +971,7 @@ def show_brief_stats(message):
         response += f"📦 *Архив с документацией*\n"
         response += f"📥 Всего скачиваний: *{total_downloads}*\n"
         response += f"👥 Уникальных скачавших: *{unique_users}*\n\n"
-    
+
     # Затем показываем статистику остальных файлов
     for file_name, users in sorted_stats:
         if file_name == "📦 programming-documentation.zip":  # Пропускаем архив, так как уже показали
@@ -866,12 +989,12 @@ def show_user_downloads(message):
     """Показывает статистику скачиваний конкретного пользователя"""
     user_id = str(message.from_user.id)
     user_files = {}
-    
+
     # Собираем все файлы, которые скачивал пользователь
     for file_name, users in download_stats.items():
         if user_id in users:
             user_files[file_name] = users[user_id]
-    
+
     if not user_files:
         bot.send_message(
             message.chat.id,
@@ -903,20 +1026,20 @@ def show_user_downloads(message):
 
     response = f"👤 *СТАТИСТИКА СКАЧИВАНИЙ*\n\n"
     response += f"Пользователь: *{user_name}{username}*\n\n"
-    
+
     total_downloads = sum(user_files.values())
     unique_files = len(user_files)
     response += f"📥 Всего скачано файлов: *{total_downloads}*\n"
     response += f"📄 Уникальных файлов: *{unique_files}*\n\n"
-    
+
     response += "📄 *Список скачанных файлов:*\n\n"
-    
+
     # Сначала показываем архив, если он есть
     archive_downloads = next((item for item in sorted_files if item[0] == "📦 programming-documentation.zip"), None)
     if archive_downloads:
         file_name, count = archive_downloads
         response += f"• 📦 *Архив с документацией*: {count} раз\n"
-    
+
     # Затем показываем остальные файлы
     for file_name, count in sorted_files:
         if file_name == "📦 programming-documentation.zip":  # Пропускаем архив, так как уже показали
@@ -946,7 +1069,7 @@ def create_archive(message):
 
         # Перемещаем указатель в начало архива
         archive.seek(0)
-        
+
         # Обновляем статистику скачиваний архива
         archive_name = "📦 programming-documentation.zip"
         if archive_name not in download_stats:
@@ -954,7 +1077,7 @@ def create_archive(message):
         user_id = str(message.from_user.id)
         download_stats[archive_name][user_id] = download_stats[archive_name].get(user_id, 0) + 1
         save_stats()
-        
+
         # Отправляем архив
         bot.send_document(
             message.chat.id,
@@ -968,7 +1091,208 @@ def create_archive(message):
         bot.reply_to(message, f"❌ {error_msg}")
 
 
+def load_model():
+    """Загрузка модели и токенизатора"""
+    global model, tokenizer, model_loaded
+
+    if model_loaded:
+        logger.info("Модель уже загружена, пропускаем загрузку")
+        return
+
+    try:
+        logger.info("Начинаем процесс загрузки модели и токенизатора...")
+        model_name = "microsoft/phi-1_5"
+        logger.info(f"Используем модель: {model_name}")
+
+        # Используем CPU вместо MPS для лучшей совместимости
+        device = "cpu"
+        logger.info(f"Используем устройство: {device}")
+
+        # Загрузка токенизатора
+        logger.info("Загружаем токенизатор...")
+        start_time = time.time()
+        with tqdm(total=100, desc="Загрузка токенизатора", ncols=100) as pbar:
+            tokenizer = AutoTokenizer.from_pretrained(model_name)
+            pbar.update(100)
+        logger.info(f"Токенизатор загружен за {time.time() - start_time:.2f} секунд")
+
+        # Загрузка модели с оптимизациями
+        logger.info("Загружаем модель с оптимизациями...")
+        start_time = time.time()
+
+        # Создаем прогресс-бар для загрузки модели
+        with tqdm(total=100, desc="Загрузка модели", ncols=100) as pbar:
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.float32,  # Используем float32 вместо float16
+                device_map="cpu",  # Явно указываем использование CPU
+                offload_folder="model_offload"
+            )
+            pbar.update(100)
+
+        logger.info(f"Модель загружена за {time.time() - start_time:.2f} секунд")
+
+        # Логируем информацию о модели
+        logger.info(f"Устройство модели: {model.device}")
+        logger.info(f"Тип данных модели: {model.dtype}")
+        logger.info(f"Количество параметров модели: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")
+
+        model_loaded = True
+        logger.info("Модель и токенизатор успешно загружены")
+
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке модели: {e}", exc_info=True)
+        raise
+
+
+def unload_model():
+    """Выгрузка модели и очистка памяти"""
+    global model, tokenizer, model_loaded
+
+    try:
+        if model is not None:
+            logger.info("Начинаем процесс выгрузки модели...")
+
+            # Проверяем, является ли модель мета-тензором
+            if hasattr(model, 'device') and str(model.device) != 'meta':
+                logger.info(f"Текущее устройство модели: {model.device}")
+                try:
+                    # Пытаемся переместить модель на CPU только если это не мета-тензор
+                    logger.info("Перемещаем модель на CPU...")
+                    start_time = time.time()
+                    with tqdm(total=100, desc="Перемещение модели на CPU", ncols=100) as pbar:
+                        model = model.cpu()
+                        pbar.update(100)
+                    logger.info(f"Модель перемещена на CPU за {time.time() - start_time:.2f} секунд")
+                except Exception as e:
+                    logger.warning(f"Не удалось переместить модель на CPU: {e}")
+
+            logger.info("Удаляем модель...")
+            del model
+            model = None
+
+        if tokenizer is not None:
+            logger.info("Удаляем токенизатор...")
+            del tokenizer
+            tokenizer = None
+
+        model_loaded = False
+
+        # Очищаем кэш CUDA/MPS если доступно
+        if torch.cuda.is_available():
+            logger.info("Очищаем кэш CUDA...")
+            torch.cuda.empty_cache()
+            logger.info(f"Выделено памяти CUDA: {torch.cuda.memory_allocated() / 1e6:.2f}MB")
+        elif torch.backends.mps.is_available():
+            logger.info("Очищаем кэш MPS...")
+            torch.mps.empty_cache()
+
+        # Принудительный сбор мусора
+        logger.info("Запускаем сборщик мусора...")
+        gc.collect()
+
+        logger.info("Модель успешно выгружена")
+
+    except Exception as e:
+        logger.error(f"Ошибка при выгрузке модели: {e}", exc_info=True)
+        # Даже при ошибке пытаемся очистить память
+        try:
+            if model is not None:
+                del model
+            if tokenizer is not None:
+                del tokenizer
+            model = None
+            tokenizer = None
+            model_loaded = False
+            gc.collect()
+        except:
+            pass
+
+
+def get_ai_response(message: str) -> str:
+    """Генерация ответа с помощью AI"""
+    global model, tokenizer, model_loaded
+
+    try:
+        if not model_loaded:
+            logger.info("Модель не загружена, загружаем сейчас...")
+            load_model()
+
+        # Подготавливаем промпт в более естественном формате
+        prompt = f"Вопрос: {message}\n\nОтвет:"
+        logger.info(f"Подготовлен промпт: {prompt[:100]}...")
+
+        # Токенизируем входной текст
+        logger.info("Токенизируем входной текст...")
+        start_time = time.time()
+        with tqdm(total=100, desc="Токенизация", ncols=100) as pbar:
+            inputs = tokenizer(
+                prompt,
+                return_tensors="pt",
+                max_length=256,
+                truncation=True
+            ).to(model.device)
+            pbar.update(100)
+        logger.info(f"Входной текст токенизирован за {time.time() - start_time:.2f} секунд")
+        logger.info(f"Размер входных данных: {inputs['input_ids'].shape}")
+
+        # Генерируем ответ
+        logger.info("Генерируем ответ...")
+        start_time = time.time()
+        with tqdm(total=100, desc="Генерация ответа", ncols=100) as pbar:
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=256,
+                min_new_tokens=1,
+                temperature=0.7,
+                top_p=0.95,
+                do_sample=True,
+                repetition_penalty=1.2,
+                no_repeat_ngram_size=3,
+                num_return_sequences=1
+            )
+            pbar.update(100)
+        generation_time = time.time() - start_time
+        logger.info(f"Ответ сгенерирован за {generation_time:.2f} секунд")
+
+        # Декодируем ответ
+        logger.info("Декодируем ответ...")
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        # Убираем промпт из ответа
+        response = response.replace(prompt, "").strip()
+
+        if not response:
+            logger.warning("Сгенерирован пустой ответ")
+            return "⚠️ Не удалось сгенерировать ответ. Пожалуйста, попробуйте переформулировать вопрос."
+
+        logger.info(f"Сгенерирован ответ: {response[:100]}...")
+        return response
+
+    except Exception as e:
+        logger.error(f"Ошибка при генерации ответа: {e}", exc_info=True)
+        return "❌ Произошла ошибка при генерации ответа. Пожалуйста, попробуйте еще раз."
+
+
+def signal_handler(signum, frame):
+    """Обработчик сигналов для корректного завершения работы"""
+    logger.info("Received stop signal, unloading model...")
+    unload_model()
+    logger.info("Bot stopped")
+    sys.exit(0)
+
+
+# Регистрируем обработчики сигналов
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 if __name__ == "__main__":
-    print("Бот запущен...")
-    # Запускаем бота
-    bot.polling(non_stop=True) 
+    try:
+        logger.info("Бот запущен...")
+        # Убираем загрузку модели при старте
+        bot.polling(none_stop=True)
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}")
+        # Выгружаем модель при ошибке, если она была загружена
+        if model_loaded:
+            unload_model()
+        raise
