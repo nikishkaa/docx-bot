@@ -1,16 +1,16 @@
-FROM python:3.9
+FROM python:3.9-slim
 
 WORKDIR /app
 
-# Установка необходимых пакетов
+# Копируем только requirements.txt сначала
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
-# Копирование файлов проекта
+# Копируем остальные файлы
 COPY . .
 
-# Создание директории для загрузок
+# Создаем директорию для загрузок
 RUN mkdir -p uploads
 
-# Запуск бота
+
 CMD ["python", "bot_with_files.py"] 

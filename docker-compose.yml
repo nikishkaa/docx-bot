@@ -2,11 +2,17 @@ version: '3.8'
 
 services:
   bot:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
     container_name: telegram_file_bot
     volumes:
       - ./uploads:/app/uploads
       - ./download_stats.json:/app/download_stats.json
+      - ./.env:/app/.env:ro
     env_file:
       - .env
     restart: unless-stopped
@@ -15,4 +21,4 @@ services:
 
 networks:
   bot_network:
-    driver: bridge 
+    driver: bridge
