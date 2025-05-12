@@ -1101,12 +1101,16 @@ def load_model():
 
     try:
         logger.info("Начинаем процесс загрузки модели и токенизатора...")
-        model_name = "microsoft/phi-1_5"
+        model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
         logger.info(f"Используем модель: {model_name}")
 
-        # Используем CPU вместо MPS для лучшей совместимости
-        device = "cpu"
-        logger.info(f"Используем устройство: {device}")
+        # Определяем доступное устройство
+        if torch.cuda.is_available():
+            device = "cuda"
+            logger.info("Используем CUDA (GPU)")
+        else:
+            device = "cpu"
+            logger.info("Используем CPU")
 
         # Загрузка токенизатора
         logger.info("Загружаем токенизатор...")
@@ -1124,8 +1128,8 @@ def load_model():
         with tqdm(total=100, desc="Загрузка модели", ncols=100) as pbar:
             model = AutoModelForCausalLM.from_pretrained(
                 model_name,
-                torch_dtype=torch.float32,  # Используем float32 вместо float16
-                device_map="cpu",  # Явно указываем использование CPU
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                device_map=device,
                 offload_folder="model_offload"
             )
             pbar.update(100)
@@ -1218,8 +1222,8 @@ def get_ai_response(message: str) -> str:
             logger.info("Модель не загружена, загружаем сейчас...")
             load_model()
 
-        # Подготавливаем промпт в более естественном формате
-        prompt = f"Вопрос: {message}\n\nОтвет:"
+        # Подготавливаем промпт в формате чата
+        prompt = f"<|system|>\nТы - полезный ассистент, который дает четкие и информативные ответы.\n<|user|>\n{message}\n<|assistant|>\n"
         logger.info(f"Подготовлен промпт: {prompt[:100]}...")
 
         # Токенизируем входной текст
@@ -1229,7 +1233,7 @@ def get_ai_response(message: str) -> str:
             inputs = tokenizer(
                 prompt,
                 return_tensors="pt",
-                max_length=256,
+                max_length=512,
                 truncation=True
             ).to(model.device)
             pbar.update(100)
@@ -1242,14 +1246,15 @@ def get_ai_response(message: str) -> str:
         with tqdm(total=100, desc="Генерация ответа", ncols=100) as pbar:
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=256,
+                max_new_tokens=512,
                 min_new_tokens=1,
                 temperature=0.7,
-                top_p=0.95,
+                top_p=0.9,
                 do_sample=True,
-                repetition_penalty=1.2,
+                repetition_penalty=1.1,
                 no_repeat_ngram_size=3,
-                num_return_sequences=1
+                num_return_sequences=1,
+                pad_token_id=tokenizer.eos_token_id
             )
             pbar.update(100)
         generation_time = time.time() - start_time
@@ -1286,13 +1291,35 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 if __name__ == "__main__":
-    try:
-        logger.info("Бот запущен...")
-        # Убираем загрузку модели при старте
-        bot.polling(none_stop=True)
-    except Exception as e:
-        logger.error(f"Критическая ошибка: {e}")
-        # Выгружаем модель при ошибке, если она была загружена
-        if model_loaded:
-            unload_model()
-        raise
+    max_retries = 5
+    retry_delay = 5  # секунды
+    retry_count = 0
+
+    while retry_count < max_retries:
+        try:
+            logger.info("Бот запущен...")
+            # Удаляем вебхук перед запуском
+            bot.remove_webhook()
+            # Запускаем бота с обработкой ошибок
+            bot.polling(none_stop=True, interval=0, timeout=20)
+        except telebot.apihelper.ApiTelegramException as e:
+            if "Conflict: terminated by other getUpdates request" in str(e):
+                retry_count += 1
+                logger.warning(f"Обнаружен конфликт с другим экземпляром бота. Попытка {retry_count} из {max_retries}")
+                if retry_count < max_retries:
+                    logger.info(f"Ожидание {retry_delay} секунд перед следующей попыткой...")
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    logger.error("Превышено максимальное количество попыток переподключения")
+                    break
+            else:
+                logger.error(f"Ошибка API Telegram: {e}")
+                break
+        except Exception as e:
+            logger.error(f"Критическая ошибка: {e}")
+            break
+        finally:
+            # Выгружаем модель при ошибке, если она была загружена
+            if model_loaded:
+                unload_model()
